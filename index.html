@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Peptide Log</title>
+<meta name="theme-color" content="#0b6970">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Peptide Log">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;-webkit-tap-highlight-color:transparent}img{max-width:100%}</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one narrow column, a tab bar under the header; each dose is a "pharmacy label" card with the syringe drawn to scale. */
+:root {
+  --bg: #eef3f3; --surface: #ffffff; --sunk: #e3eaeb; --ink: #142427; --muted: #566a6e; --line: #d3dedf;
+  --accent: #0b6970; --accent-ink: #ffffff; --accent-soft: #d6ecec;
+  --warn: #8a4f00; --warn-bg: #fff1d6; --ok: #22713a; --ok-bg: #e2f2e5; --danger: #b3261e;
+  --p0: #0b7f86; --p1: #c2410c; --p2: #6d4fc2; --p3: #b8860b; --p4: #be185d; --p5: #2f7a3d;
+  --f-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1617; --surface: #162123; --sunk: #1d2a2c; --ink: #e2eded; --muted: #92a6a9; --line: #2a3b3d;
+  --accent: #5cc8c9; --accent-ink: #062224; --accent-soft: #173b3c;
+  --warn: #f2b65c; --warn-bg: #332610; --ok: #82d494; --ok-bg: #15301c; --danger: #ff8a80;
+  --p0: #4fc6cc; --p1: #ff9566; --p2: #b39dff; --p3: #e8c15a; --p4: #f47eb2; --p5: #7fd18d;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1617; --surface: #162123; --sunk: #1d2a2c; --ink: #e2eded; --muted: #92a6a9; --line: #2a3b3d;
+  --accent: #5cc8c9; --accent-ink: #062224; --accent-soft: #173b3c;
+  --warn: #f2b65c; --warn-bg: #332610; --ok: #82d494; --ok-bg: #15301c; --danger: #ff8a80;
+  --p0: #4fc6cc; --p1: #ff9566; --p2: #b39dff; --p3: #e8c15a; --p4: #f47eb2; --p5: #7fd18d;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+.wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 64px; display: grid; gap: 18px }
+h1, h2, h3 { font-family: var(--f-display); margin: 0; text-wrap: balance; letter-spacing: -0.01em }
+h1 { font-size: 1.75rem; font-weight: 700 }
+h2 { font-size: 1.2rem; font-weight: 700 }
+h3 { font-size: 1.08rem; font-weight: 700 }
+p { margin: 0 }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+.muted { color: var(--muted) }
+.small { font-size: 0.85rem }
+.label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600 }
+
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+.status { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 6px }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block }
+.status.synced i { background: var(--ok) }
+
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--sunk); border-radius: 12px; padding: 4px; gap: 4px;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5 }
+.tabs button { border: 0; background: transparent; color: var(--muted); font: 600 0.9rem var(--f-body); padding: 9px 4px; border-radius: 9px; cursor: pointer }
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08) }
+
+button, .btn { font: 600 0.92rem var(--f-body); cursor: pointer; border-radius: 9px; padding: 9px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink) }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+button.ghost { background: transparent; border-color: transparent; color: var(--accent); padding-inline: 8px }
+button.danger { color: var(--danger) }
+button:disabled { opacity: .5; cursor: default }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; min-width: 0 }
+.stack { display: grid; gap: 12px }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.between { justify-content: space-between }
+
+/* Week strip */
+.week { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px }
+.day { border: 1px solid transparent; background: transparent; padding: 6px 0 8px; display: grid; gap: 2px; justify-items: center; border-radius: 10px; color: var(--ink) }
+.day .dw { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em }
+.day .dn { font: 700 1.05rem var(--f-mono) }
+.day .dots { display: flex; gap: 3px; height: 6px }
+.day .dots b { width: 6px; height: 6px; border-radius: 50%; background: var(--c); opacity: .3 }
+.day .dots b.done { opacity: 1 }
+.day.is-today .dn { color: var(--accent) }
+.day[aria-pressed="true"] { background: var(--surface); border-color: var(--line) }
+.arrow { padding: 8px 10px; background: transparent; border-color: transparent; color: var(--muted) }
+
+/* Dose card */
+.dose { --c: var(--p0); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: grid; gap: 12px; border-top: 4px solid var(--c); min-width: 0 }
+.dose.taken { background: color-mix(in srgb, var(--surface) 70%, var(--ok-bg)) }
+.dose-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap }
+.chip { font-size: 0.75rem; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: var(--sunk); color: var(--muted); white-space: nowrap }
+.chip.ok { background: var(--ok-bg); color: var(--ok) }
+.chip.warn { background: var(--warn-bg); color: var(--warn) }
+.draw { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap }
+.draw .big { font: 700 2.3rem/1 var(--f-mono); color: var(--c) }
+.draw .big span { font-size: 0.95rem; color: var(--muted); font-weight: 500; margin-left: 4px }
+.syr { width: 100%; height: auto; display: block; color: var(--muted) }
+.syr .barrel { fill: var(--sunk); stroke: var(--line) }
+.syr .ticks line { stroke: var(--muted); stroke-width: 1 }
+.syr text { fill: var(--muted); font: 500 9px var(--f-mono); text-anchor: middle }
+.syr .needle { fill: var(--muted) }
+.syr .rod { fill: var(--line) }
+.note { font-size: 0.86rem; padding: 9px 11px; border-radius: 8px; background: var(--warn-bg); color: var(--warn) }
+.info { font-size: 0.86rem; color: var(--muted) }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px 16px }
+.stats div { display: grid; gap: 1px; min-width: 0 }
+.stats .v { font: 700 1rem var(--f-mono); font-variant-numeric: tabular-nums }
+.bar { height: 6px; background: var(--sunk); border-radius: 99px; overflow: hidden }
+.bar i { display: block; height: 100%; background: var(--c) }
+
+.steps { display: grid; gap: 2px; font-size: 0.88rem }
+.steps .st { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; padding: 6px 8px; border-radius: 7px; align-items: baseline }
+.steps .st.cur { background: color-mix(in srgb, var(--c) 14%, transparent); font-weight: 600 }
+.steps .st.done { color: var(--muted) }
+.steprow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end }
+.steprow .onward { font-size: 0.85rem; color: var(--muted); padding: 10px 0 }
+.up { font-size: 0.86rem; padding: 9px 11px; border-radius: 8px; background: var(--accent-soft); color: var(--ink) }
+.empty { text-align: left; padding: 22px 18px; display: grid; gap: 12px; background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r) }
+
+/* Forms */
+.field { display: grid; gap: 5px; min-width: 0 }
+.field > span { font-size: 0.82rem; font-weight: 600; color: var(--muted) }
+input, select, textarea { font: 500 1rem var(--f-body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; min-width: 0 }
+input[type="checkbox"] { width: auto }
+textarea { font: 0.82rem var(--f-mono); min-height: 90px }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.grid3 { display: grid; grid-template-columns: 2fr 1fr; gap: 10px }
+.dow { display: flex; gap: 4px; flex-wrap: wrap }
+.dow label { display: flex; align-items: center; justify-content: center; width: 40px; height: 36px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--muted) }
+.dow input { position: absolute; opacity: 0; pointer-events: none }
+.dow label:has(input:checked) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.check { display: flex; gap: 8px; align-items: center; font-size: 0.9rem }
+.swatches { display: flex; gap: 6px }
+.swatches label { width: 28px; height: 28px; border-radius: 50%; background: var(--c); cursor: pointer; border: 3px solid transparent }
+.swatches input { position: absolute; opacity: 0 }
+.swatches label:has(input:checked) { border-color: var(--ink) }
+.preview { background: var(--sunk); border-radius: 10px; padding: 12px; display: grid; gap: 8px }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; min-width: 0 }
+legend { font: 700 0.95rem var(--f-display); margin-bottom: 4px; padding: 0 }
+
+.sheet { position: fixed; inset: 0; background: rgb(0 0 0 / .45); z-index: 20; display: grid; align-items: end; justify-items: center; overflow-y: auto; padding: 24px 0 0 }
+.sheet-card { background: var(--surface); width: 100%; max-width: 640px; border-radius: 16px 16px 0 0; padding: 18px 16px calc(24px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 16px }
+@media (min-width: 680px) { .sheet { align-items: center; padding: 32px 16px } .sheet-card { border-radius: 16px } }
+
+.hist-day { display: grid; gap: 6px }
+.hist-item { display: grid; grid-template-columns: 10px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line) }
+.hist-item .sw { width: 10px; height: 10px; border-radius: 50%; background: var(--c) }
+.hist-item:last-child { border-bottom: 0 }
+.xbtn { padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: 1rem }
+
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 0.9rem; z-index: 30; max-width: calc(100% - 32px) }
+footer { font-size: 0.8rem; color: var(--muted); line-height: 1.5 }
+@media (max-width: 420px) { .grid2 { grid-template-columns: 1fr } .draw .big { font-size: 2rem } }
+@media (prefers-reduced-motion: no-preference) { .dose, .panel { transition: background .2s } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="top">
+    <div>
+      <div class="label">U-100 syringe · reconstitution & schedule</div>
+      <h1>Peptide Log</h1>
+    </div>
+    <div class="status" id="status"><i></i><span>Loading…</span></div>
+  </div>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="today" aria-selected="true">Today</button>
+    <button role="tab" data-tab="stack" aria-selected="false">My stack</button>
+    <button role="tab" data-tab="history" aria-selected="false">History</button>
+    <button role="tab" data-tab="calc" aria-selected="false">Calculator</button>
+  </nav>
+
+  <main id="view" class="stack"><div class="empty"><p class="muted">Loading your stack…</p></div></main>
+
+  <footer>
+    Units assume a U-100 insulin syringe, where 100 units = 1 mL and each unit is 0.01 mL. This app does the math on the numbers you enter. Double-check each draw, and confirm doses and schedules with your prescriber.
+  </footer>
+</div>
+
+<div class="sheet" id="sheet" hidden><div class="sheet-card" id="sheetCard"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pad = n => String(n).padStart(2, '0');
+const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseKey = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
+const daysBetween = (aKey, bKey) => Math.round((parseKey(bKey) - parseKey(aKey)) / 864e5);
+const todayKey = () => keyOf(new Date());
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const clone = o => JSON.parse(JSON.stringify(o));
+const fmt = (n, dp = 2) => Number.isFinite(n) ? String(+n.toFixed(dp)) : '—';
+const mass = mg => !Number.isFinite(mg) ? '—' : (mg < 1 ? `${fmt(mg * 1000, 0)} mcg` : `${fmt(mg, 2)} mg`);
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const fmtDate = k => parseKey(k).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const fmtTime = iso => { try { return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } };
+const colorVar = i => `var(--p${(i ?? 0) % 6})`;
+
+/* ---------- state ---------- */
+let S = { peptides: [], settings: { syringe: 100 } };
+let L = {};               // { 'YYYY-MM': [entries] }
+let loaded = false, hasStack = false;
+let store = { mode: 'local' };
+let tab = 'today';
+let selDate = todayKey();
+let draft = null, editingId = null, delArm = false;
+try { const t = localStorage.getItem('peptide-log-tab'); if (t) tab = t; } catch {}
+
+const allLogs = () => Object.values(L).flat();
+const logsFor = (pid, date) => allLogs().filter(l => l.pid === pid && l.date === date);
+
+/* ---------- storage ---------- */
+const LS_KEY = 'peptide-log-data-v1';
+function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify({ S, L })); } catch {} }
+function loadLocal() {
+  try { const raw = localStorage.getItem(LS_KEY); if (raw) { const d = JSON.parse(raw); S = d.S || S; L = d.L || {}; hasStack = true; } } catch {}
+}
+const dirty = new Set(), pending = new Set(), writing = new Set(), requeue = new Set();
+let flushTimer = null;
+function persist(docId) {
+  if (store.mode === 'local') { hasStack = true; saveLocal(); return; }
+  dirty.add(docId); pending.add(docId);
+  clearTimeout(flushTimer); flushTimer = setTimeout(() => { for (const id of [...pending]) { pending.delete(id); flushDoc(id); } }, 350);
+}
+async function flushDoc(id) {
+  if (writing.has(id)) { requeue.add(id); return; }
+  writing.add(id);
+  try {
+    const body = id === 'stack' ? { peptides: S.peptides, settings: S.settings } : { entries: L[id.slice(4)] || [] };
+    await store.col.doc(id).set(clone(body));
+    hasStack = true;
+  } catch (e) {
+    toast(e && e.code === 'quota_exceeded' ? 'Storage is full. Delete old history to keep saving.' : 'Couldn’t save that change. Check your connection and try again.');
+  }
+  writing.delete(id);
+  if (requeue.has(id)) { requeue.delete(id); return flushDoc(id); }
+  dirty.delete(id);
+}
+function setStatus(synced, text) {
+  const el = $('#status'); el.className = 'status' + (synced ? ' synced' : ''); el.querySelector('span').textContent = text;
+}
+async function initStore() {
+  let db = null, user = null, id = null;
+  try {
+    if (window.claude && window.claude.use) {
+      [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+      id = user ? await user.id() : null;
+    }
+  } catch {}
+  if (db && id) {
+    store = { mode: 'db', col: db.collection('data/users/' + id) };
+    setStatus(true, 'Saved to your account');
+    store.col.onSnapshot(snap => {
+      for (const d of snap.docs) {
+        if (dirty.has(d.id)) continue;
+        const data = d.data(); if (!data) continue;
+        if (d.id === 'stack') { S = { peptides: clone(data.peptides || []), settings: clone(data.settings || { syringe: 100 }) }; hasStack = true; }
+        else if (d.id.startsWith('log-')) L[d.id.slice(4)] = clone(data.entries || []);
+      }
+      loaded = true; render();
+    }, () => { fallbackLocal(); });
+  } else fallbackLocal();
+}
+function fallbackLocal() {
+  store = { mode: 'local' }; loadLocal(); loaded = true;
+  setStatus(false, 'Saved on this phone');
+  render();
+}
+
+/* ---------- schedule math ---------- */
+function endKey(p) { return p.weeks ? keyOf(addDays(parseKey(p.start), p.weeks * 7 - 1)) : null; }
+function isDue(p, k) {
+  if (!p.freq || !p.start || p.paused) return false;
+  if (k < p.start) return false;
+  const end = endKey(p); if (end && k > end) return false;
+  const f = p.freq;
+  if (f.type === 'daily') return true;
+  if (f.type === 'days') return (f.days || []).includes(parseKey(k).getDay());
+  if (f.type === 'interval') { const n = Math.max(1, +f.n || 1); return daysBetween(p.start, k) % n === 0; }
+  return false;
+}
+function freqLabel(p) {
+  const f = p.freq; if (!f) return 'No schedule yet';
+  if (f.type === 'daily') return 'Every day';
+  if (f.type === 'interval') return `Every ${f.n || 1} days`;
+  const d = (f.days || []).slice().sort();
+  if (d.length === 7) return 'Every day';
+  if (d.length === 1) return `Once a week · ${DOW[d[0]]}`;
+  if (!d.length) return 'No days picked';
+  return d.map(i => DOW[i]).join(', ');
+}
+const stepsOf = p => (p.titrate && Array.isArray(p.steps) && p.steps.length) ? p.steps : null;
+const toMg = (p, v) => (+v || 0) * (p.doseUnit === 'mcg' ? 0.001 : 1);
+function stepIndex(p, k) {
+  const st = stepsOf(p); if (!st) return -1;
+  const wk = p.start && k >= p.start ? Math.floor(daysBetween(p.start, k) / 7) : 0;
+  let acc = 0;
+  for (let i = 0; i < st.length; i++) { if (i === st.length - 1 || !(+st[i].weeks > 0)) return i; acc += +st[i].weeks; if (wk < acc) return i; }
+  return st.length - 1;
+}
+function stepWeeks(p, i) { const st = stepsOf(p); let a = 0; for (let j = 0; j < i; j++) a += +st[j].weeks || 0; return a; }
+function doseOn(p, k) { const st = stepsOf(p); return st ? (+st[stepIndex(p, k)].dose || 0) : (+p.dose || 0); }
+function prevDue(p, k) { let d = parseKey(k); for (let i = 0; i < 60; i++) { d = addDays(d, -1); const x = keyOf(d); if (x < p.start) return null; if (isDue(p, x)) return x; } return null; }
+function nextStep(p, k) {
+  const st = stepsOf(p); if (!st) return null; const i = stepIndex(p, k);
+  if (i >= st.length - 1 || !(+st[i].weeks > 0)) return null;
+  return { date: keyOf(addDays(parseKey(p.start), stepWeeks(p, i + 1) * 7)), dose: +st[i + 1].dose || 0 };
+}
+function needsSetup(p) {
+  const comps = p.components || [];
+  return !(comps.length && comps.every(c => +c.mg > 0) && +p.water > 0 && (stepsOf(p) ? stepsOf(p).every(x => +x.dose > 0) : +p.dose > 0) && p.freq && (p.freq.type !== 'days' || (p.freq.days || []).length));
+}
+function compute(p, k = todayKey()) {
+  const cap = +(S.settings && S.settings.syringe) || 100;
+  const comps = p.components || [];
+  const ri = Math.min(p.doseRef || 0, comps.length - 1);
+  const ref = comps[ri];
+  const water = +p.water;
+  const dose = doseOn(p, k);
+  const doseMg = toMg(p, dose);
+  if (!ref || !(+ref.mg > 0) || !(water > 0) || !(doseMg > 0)) return { ok: false, cap };
+  const conc = ref.mg / water;
+  const ml = doseMg / conc;
+  const units = ml * 100;
+  const parts = comps.map((c, i) => ({ name: c.name || p.name, mg: (+c.mg || 0) / water * ml, ref: i === ri }));
+  const used = allLogs().filter(l => l.pid === p.id && (!p.mixed || l.date >= p.mixed)).reduce((a, l) => a + (+l.doseMg || 0), 0);
+  const remaining = Math.max(0, ref.mg - used);
+  return { ok: true, cap, conc, ml, units, dose, doseMg, parts, refName: ref.name || p.name, refMg: +ref.mg,
+    perVial: Math.floor(ref.mg / doseMg + 1e-9), remaining, dosesLeft: Math.floor(remaining / doseMg + 1e-9),
+    over: units > cap + 1e-9, tiny: units < 3 };
+}
+function runOut(p, c) {
+  if (!c.ok || !p.freq) return null;
+  // Walks the schedule day by day so dose increases are counted; returns the first dose the vial can't cover.
+  let left = c.remaining;
+  let d = new Date(); if (logsFor(p.id, keyOf(d)).length) d = addDays(d, 1);
+  for (let i = 0; i < 730; i++) {
+    const k = keyOf(d);
+    if (isDue(p, k)) { const need = toMg(p, doseOn(p, k)); if (left < need - 1e-9) return i === 0 ? { empty: true } : { date: k }; left -= need; }
+    d = addDays(d, 1);
+  }
+  return { pastEnd: true };
+}
+function nextDue(p, fromKey) {
+  let d = parseKey(fromKey);
+  for (let i = 1; i <= 120; i++) { d = addDays(d, 1); const k = keyOf(d); if (isDue(p, k)) return k; }
+  return null;
+}
+function adherence(p) {
+  if (!p.start || !p.freq) return null;
+  const t = todayKey(); const end = endKey(p); const last = end && end < t ? end : t;
+  if (last < p.start) return null;
+  let due = 0, taken = 0, d = parseKey(p.start);
+  for (let i = 0; i < 1500; i++) { const k = keyOf(d); if (k > last) break; if (isDue(p, k)) { due++; if (logsFor(p.id, k).length) taken++; } d = addDays(d, 1); }
+  return { due, taken };
+}
+function courseChip(p, k) {
+  if (!p.start) return '';
+  if (k < p.start) return `<span class="chip">Starts ${esc(fmtDate(p.start))}</span>`;
+  const end = endKey(p);
+  if (end && k > end) return `<span class="chip ok">Course complete</span>`;
+  if (p.weeks) { const day = daysBetween(p.start, k) + 1; return `<span class="chip">Day ${day} of ${p.weeks * 7}</span>`; }
+  return `<span class="chip">${esc(freqLabel(p))}</span>`;
+}
+
+/* ---------- pieces ---------- */
+function syringe(units, cap, color) {
+  const x0 = 30, x1 = 312, w = x1 - x0;
+  const u = Math.max(0, Math.min(units, cap)); const fx = x0 + w * u / cap;
+  const minor = cap >= 100 ? 2 : 1, major = cap >= 100 ? 10 : 5;
+  let ticks = '', labels = '';
+  for (let t = 0; t <= cap; t += minor) {
+    const x = (x0 + w * t / cap).toFixed(1); const M = t % major === 0;
+    ticks += `<line x1="${x}" x2="${x}" y1="12" y2="${M ? 26 : 19}"/>`;
+    if (M) labels += `<text x="${x}" y="44">${t}</text>`;
+  }
+  return `<svg class="syr" viewBox="0 0 340 50" role="img" aria-label="Syringe filled to ${fmt(units, 1)} of ${cap} units">
+    <rect class="needle" x="2" y="20" width="${x0 - 8}" height="3" rx="1"/>
+    <rect class="needle" x="${x0 - 7}" y="16" width="7" height="11" rx="1.5"/>
+    <rect class="rod" x="${fx.toFixed(1)}" y="19" width="${(336 - fx).toFixed(1)}" height="5"/>
+    <rect class="rod" x="333" y="8" width="5" height="27" rx="1.5"/>
+    <rect class="barrel" x="${x0}" y="10" width="${w}" height="24" rx="3"/>
+    <rect x="${x0 + 0.5}" y="10.5" width="${Math.max(0, fx - x0 - 0.5).toFixed(1)}" height="23" style="fill:${color};opacity:.32"/>
+    <g class="ticks">${ticks}</g>
+    <rect x="${(fx - 2).toFixed(1)}" y="7" width="4" height="30" rx="1.5" style="fill:${color}"/>
+    ${labels}
+  </svg>`;
+}
+function warnings(c) {
+  if (!c.ok) return '';
+  if (c.over) return `<p class="note">That draw is more than one ${c.cap}-unit syringe. Mix the next vial with less BAC water, or split this dose into two draws.</p>`;
+  if (c.tiny) return `<p class="note">Under 3 units is hard to measure accurately. Mixing with more BAC water gives a bigger, easier draw.</p>`;
+  return '';
+}
+function partsLine(c) {
+  if (!c.ok || c.parts.length < 2) return '';
+  return `<p class="info">Each draw contains ${c.parts.map(x => `<b>${esc(mass(x.mg))}</b> ${esc(x.name)}`).join(' + ')}</p>`;
+}
+function doseText(p, k = todayKey()) { const v = doseOn(p, k); return v ? `${fmt(v, 3)} ${p.doseUnit}` : '—'; }
+function stepsTable(p, k) {
+  const st = stepsOf(p); if (!st) return '';
+  const cur = stepIndex(p, k);
+  return `<div class="steps">${st.map((x, i) => {
+    const a = stepWeeks(p, i), last = i === st.length - 1 || !(+x.weeks > 0);
+    const label = last ? `Week ${a + 1} onward` : (+x.weeks === 1 ? `Week ${a + 1}` : `Weeks ${a + 1}\u2013${a + +x.weeks}`);
+    const c = compute(Object.assign({}, p, { titrate: false, dose: x.dose }), k);
+    return `<div class="st${i === cur ? ' cur' : i < cur ? ' done' : ''}"><span>${label}${p.start ? ` <span class="small muted">from ${esc(fmtDate(keyOf(addDays(parseKey(p.start), a * 7))))}</span>` : ''}</span><span class="mono">${x.dose ? esc(fmt(+x.dose, 3) + ' ' + p.doseUnit) : '—'}</span><span class="mono">${c.ok ? fmt(c.units, 1) + ' u' : ''}</span></div>`;}).join('')}</div>`;
+}
+
+/* ---------- views ---------- */
+function render() {
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  const v = $('#view');
+  if (!loaded) return;
+  if (tab === 'today') v.innerHTML = viewToday();
+  else if (tab === 'stack') v.innerHTML = viewStack();
+  else if (tab === 'history') v.innerHTML = viewHistory();
+  else v.innerHTML = viewCalc(), calcUpdate();
+}
+
+function emptyState() {
+  return `<div class="empty">
+    <h2>Set up your stack</h2>
+    <p class="muted">Start with your five peptides and their schedules already filled in: tesamorelin (daily, 8 weeks), GHK-Cu (daily), retatrutide (weekly), NAD+, and a BPC-157 / TB-500 blend. Then add each vial's milligrams, BAC water and your dose.</p>
+    <div class="row"><button class="primary" data-act="template">Start with my stack</button><button data-act="add">Add one peptide</button></div>
+  </div>`;
+}
+
+function weekStrip() {
+  const sel = parseKey(selDate); const monday = addDays(sel, -((sel.getDay() + 6) % 7)); const t = todayKey();
+  let cells = '';
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(monday, i), k = keyOf(d);
+    const due = S.peptides.filter(p => isDue(p, k));
+    const dots = due.slice(0, 6).map(p => `<b style="--c:${colorVar(p.color)}" class="${logsFor(p.id, k).length ? 'done' : ''}"></b>`).join('');
+    cells += `<button class="day${k === t ? ' is-today' : ''}" aria-pressed="${k === selDate}" data-day="${k}" aria-label="${esc(fmtDate(k))}, ${due.length} doses">
+      <span class="dw">${DOW[d.getDay()]}</span><span class="dn">${d.getDate()}</span><span class="dots">${dots}</span></button>`;
+  }
+  return `<div class="week"><button class="arrow" data-week="-7" aria-label="Previous week">‹</button><div class="days">${cells}</div><button class="arrow" data-week="7" aria-label="Next week">›</button></div>`;
+}
+
+function doseCard(p, k) {
+  const c = compute(p, k); const logs = logsFor(p.id, k); const col = colorVar(p.color);
+  const t = todayKey(); const future = k > t;
+  let action;
+  if (needsSetup(p)) action = `<button data-act="edit" data-id="${p.id}">Finish setup</button>`;
+  else if (logs.length) action = `<div class="row between"><span class="chip ok">Taken ${esc(fmtTime(logs[0].at))}</span><button class="ghost" data-act="unlog" data-id="${p.id}">Undo</button></div>`;
+  else if (future) action = `<button disabled>Scheduled</button>`;
+  else action = `<button class="primary" data-act="log" data-id="${p.id}">Mark taken</button>`;
+  return `<article class="dose${logs.length ? ' taken' : ''}" style="--c:${col}">
+    <div class="dose-head"><h3>${esc(p.name)}</h3>${courseChip(p, k)}</div>
+    ${c.ok ? `<div class="draw"><div class="big">${fmt(c.units, 1)}<span>units</span></div>
+      <div class="small muted mono">${fmt(c.ml, 3)} mL · ${esc(doseText(p, k))}${c.parts.length > 1 ? ' ' + esc(c.refName) : ''}</div></div>
+      ${syringe(c.units, c.cap, col)}${partsLine(c)}${titrationLine(p, k)}${warnings(c)}`
+      : `<p class="info">Add the vial size, BAC water and dose to see how many units to draw.</p>`}
+    ${action}
+  </article>`;
+}
+
+function titrationLine(p, k) {
+  if (!stepsOf(p) || k < p.start) return '';
+  const pd = prevDue(p, k), now = doseOn(p, k), u = p.doseUnit;
+  if (pd && doseOn(p, pd) !== now) return `<p class="up"><b>Dose goes up today:</b> ${esc(fmt(doseOn(p, pd), 3))} \u2192 ${esc(fmt(now, 3))} ${u}. Draw the new amount shown above.</p>`;
+  const n = nextStep(p, k), i = stepIndex(p, k), total = stepsOf(p).length;
+  return `<p class="info">Step ${i + 1} of ${total}${n ? ` · goes up to ${esc(fmt(n.dose, 3))} ${u} on ${esc(fmtDate(n.date))}` : ' · final dose'}</p>`;
+}
+function viewToday() {
+  if (!S.peptides.length) return emptyState();
+  const k = selDate, t = todayKey();
+  const due = S.peptides.filter(p => isDue(p, k));
+  const setup = S.peptides.filter(p => needsSetup(p) && !due.includes(p));
+  const off = S.peptides.filter(p => !due.includes(p) && !needsSetup(p));
+  const done = due.filter(p => logsFor(p.id, k).length).length;
+  const heading = k === t ? 'Today' : fmtDate(k);
+  let h = weekStrip();
+  h += `<div class="row between"><h2>${esc(heading)}</h2><span class="small muted">${due.length ? `${done} of ${due.length} done` : 'Nothing scheduled'}</span></div>`;
+  if (k !== t) h += `<div><button class="ghost" data-day="${t}">Back to today</button></div>`;
+  h += due.map(p => doseCard(p, k)).join('');
+  if (setup.length) h += `<div class="panel"><h3>Needs setup</h3><p class="small muted">Add vial size, BAC water, dose and schedule so these show up on the right days.</p>
+    ${setup.map(p => `<div class="row between"><span>${esc(p.name)}</span><button data-act="edit" data-id="${p.id}">Finish setup</button></div>`).join('')}</div>`;
+  if (off.length) h += `<div class="panel"><span class="label">Not scheduled this day</span>
+    ${off.map(p => { const n = nextDue(p, k); const lg = logsFor(p.id, k).length;
+      return `<div class="row between"><span>${esc(p.name)} <span class="small muted">· ${n ? 'next ' + esc(fmtDate(n)) : (p.weeks && endKey(p) < k ? 'course complete' : 'no upcoming dose')}</span></span>
+      ${lg ? `<button class="ghost" data-act="unlog" data-id="${p.id}">Undo extra dose</button>` : (k <= t ? `<button class="ghost" data-act="log" data-id="${p.id}">Log extra dose</button>` : '')}</div>`; }).join('')}</div>`;
+  return h;
+}
+
+function viewStack() {
+  let h = `<div class="row between"><h2>My stack</h2><button class="primary" data-act="add">Add peptide</button></div>`;
+  if (!S.peptides.length) h += emptyState();
+  for (const p of S.peptides) {
+    const c = compute(p), col = colorVar(p.color), ro = runOut(p, c), ad = adherence(p), end = endKey(p);
+    const mixedDays = p.mixed ? daysBetween(p.mixed, todayKey()) : null;
+    const vialPct = c.ok ? Math.round(100 * c.remaining / c.refMg) : 0;
+    const contents = (p.components || []).map(x => `${x.mg ? fmt(+x.mg, 2) + ' mg' : '? mg'}${p.components.length > 1 ? ' ' + esc(x.name) : ''}`).join(' + ');
+    h += `<article class="dose" style="--c:${col}">
+      <div class="dose-head"><h3>${esc(p.name)}</h3>${needsSetup(p) ? '<span class="chip warn">Finish setup</span>' : `<span class="chip">${esc(freqLabel(p))}</span>`}</div>
+      <div class="stats">
+        <div><span class="label">Vial</span><span class="v">${contents}</span><span class="small muted">${p.water ? fmt(+p.water, 2) + ' mL BAC water' : 'BAC water not set'}</span></div>
+        <div><span class="label">${stepsOf(p) ? 'Dose now' : 'Dose'}</span><span class="v">${esc(doseText(p))}</span><span class="small muted">${c.ok ? fmt(c.units, 1) + ' units · ' + fmt(c.ml, 3) + ' mL' : '—'}</span></div>
+        <div><span class="label">Strength</span><span class="v">${c.ok ? fmt(c.conc, 3) + ' mg/mL' : '—'}</span><span class="small muted">${c.ok ? fmt(c.conc * 10, 1) + ' mcg per unit' : ''}</span></div>
+        <div><span class="label">Course</span><span class="v">${p.weeks ? p.weeks + ' weeks' : 'Ongoing'}</span><span class="small muted">${p.start ? 'from ' + esc(fmtDate(p.start)) : ''}${end ? ' to ' + esc(fmtDate(end)) : ''}</span></div>
+      </div>
+      ${stepsOf(p) ? `<div class="stack" style="gap:6px"><span class="label">Dose plan</span>${stepsTable(p, todayKey())}</div>` : ''}
+      ${c.ok ? `<div class="stack" style="gap:6px">
+        <div class="row between small"><span><b class="mono">${c.dosesLeft}</b> of ${c.perVial} doses left${stepsOf(p) ? ' at today\u2019s dose' : ' in this vial'}</span><span class="muted">${ro ? (ro.empty ? 'Not enough left for the next dose' : ro.pastEnd ? 'Lasts past course end' : 'New vial needed by ' + esc(fmtDate(ro.date))) : ''}</span></div>
+        <div class="bar"><i style="width:${vialPct}%"></i></div>
+        <div class="small muted">${mixedDays !== null ? `Mixed ${mixedDays === 0 ? 'today' : mixedDays + (mixedDays === 1 ? ' day' : ' days') + ' ago'}` : ''}${ad ? ` · ${ad.taken} of ${ad.due} scheduled doses taken` : ''}</div>
+      </div>` : ''}
+      ${warnings(c)}
+      ${p.notes ? `<p class="info">${esc(p.notes)}</p>` : ''}
+      <div class="row"><button data-act="edit" data-id="${p.id}">Edit</button><button data-act="newvial" data-id="${p.id}">Mixed a new vial today</button></div>
+    </article>`;
+  }
+  h += `<div class="panel"><h3>Settings</h3>
+    <label class="field"><span>Syringe size</span><select id="s-syr">
+      ${[[100, '1 mL (100 units)'], [50, '0.5 mL (50 units)'], [30, '0.3 mL (30 units)']].map(([v, l]) => `<option value="${v}"${(S.settings.syringe || 100) == v ? ' selected' : ''}>${l}</option>`).join('')}
+    </select></label>
+    <div class="row"><button data-act="backup">Copy backup</button><button data-act="restore-open">Restore from backup</button></div>
+    <div id="backupArea"></div></div>`;
+  return h;
+}
+
+function viewHistory() {
+  let h = `<h2>History</h2>`;
+  const rows = S.peptides.map(p => ({ p, a: adherence(p) })).filter(x => x.a && x.a.due);
+  if (rows.length) h += `<div class="panel"><span class="label">Doses taken vs. scheduled, since each start date</span>
+    ${rows.map(({ p, a }) => `<div style="--c:${colorVar(p.color)};gap:4px" class="stack"><div class="row between small"><span>${esc(p.name)}</span><span class="mono">${a.taken}/${a.due}</span></div><div class="bar"><i style="width:${Math.round(100 * a.taken / a.due)}%"></i></div></div>`).join('')}</div>`;
+  const entries = allLogs().slice().sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at));
+  if (!entries.length) return h + `<div class="empty"><p class="muted">Doses you mark as taken show up here, newest first.</p></div>`;
+  const byDate = {};
+  for (const e of entries) (byDate[e.date] ||= []).push(e);
+  h += `<div class="panel">`;
+  for (const [d, list] of Object.entries(byDate).slice(0, 120)) {
+    h += `<div class="hist-day"><span class="label">${esc(fmtDate(d))}</span>
+      ${list.map(e => { const p = S.peptides.find(x => x.id === e.pid);
+        return `<div class="hist-item" style="--c:${colorVar(p ? p.color : 0)}"><span class="sw"></span><span>${esc(p ? p.name : 'Removed peptide')} <span class="small muted">· ${esc(e.label || mass(e.doseMg))}</span></span><span class="small muted mono">${fmt(e.units, 1)} u</span><button class="xbtn" aria-label="Delete entry" data-act="delentry" data-id="${e.id}" data-m="${d.slice(0, 7)}">×</button></div>`; }).join('')}</div>`;
+  }
+  return h + `</div>`;
+}
+
+function viewCalc() {
+  return `<div class="panel">
+    <h2>Reconstitution calculator</h2>
+    <p class="small muted">Quick math for any vial. Nothing here is saved.</p>
+    <div class="grid2">
+      <label class="field"><span>Peptide in vial (mg)</span><input id="c-mg" type="number" inputmode="decimal" min="0" step="any" value="10"></label>
+      <label class="field"><span>BAC water added (mL)</span><input id="c-water" type="number" inputmode="decimal" min="0" step="any" value="2"></label>
+    </div>
+    <div class="grid3">
+      <label class="field"><span>Dose you want</span><input id="c-dose" type="number" inputmode="decimal" min="0" step="any" value="250"></label>
+      <label class="field"><span>Unit</span><select id="c-unit"><option value="mcg">mcg</option><option value="mg">mg</option></select></label>
+    </div>
+    <div class="preview" id="c-out"></div>
+  </div>
+  <div class="panel">
+    <h3>How much water should I add?</h3>
+    <p class="small muted">Pick a draw that's easy to read on your syringe, and this tells you how much BAC water to mix with, using the vial and dose above.</p>
+    <label class="field"><span>Units you'd like to draw per dose</span><input id="c-target" type="number" inputmode="decimal" min="1" step="any" value="10"></label>
+    <div class="preview" id="c-out2"></div>
+  </div>`;
+}
+function calcUpdate() {
+  const g = id => parseFloat(($('#' + id) || {}).value);
+  const mg = g('c-mg'), water = g('c-water'), dose = g('c-dose') * ($('#c-unit').value === 'mcg' ? 0.001 : 1), target = g('c-target');
+  const cap = S.settings.syringe || 100;
+  const out = $('#c-out'), out2 = $('#c-out2'); if (!out) return;
+  if (mg > 0 && water > 0 && dose > 0) {
+    const c = { ok: true, cap, conc: mg / water }; c.ml = dose / c.conc; c.units = c.ml * 100; c.over = c.units > cap; c.tiny = c.units < 3;
+    out.innerHTML = `<div class="draw" style="--c:var(--accent)"><div class="big">${fmt(c.units, 1)}<span>units</span></div><div class="small muted mono">${fmt(c.ml, 3)} mL</div></div>
+      ${syringe(c.units, cap, 'var(--accent)')}
+      <div class="stats"><div><span class="label">Strength</span><span class="v">${fmt(c.conc, 3)} mg/mL</span></div><div><span class="label">Per unit</span><span class="v">${fmt(c.conc * 10, 1)} mcg</span></div><div><span class="label">Doses per vial</span><span class="v">${Math.floor(mg / dose + 1e-9)}</span></div></div>${warnings(c)}`;
+  } else out.innerHTML = `<p class="info">Enter the vial size, water and dose.</p>`;
+  if (mg > 0 && dose > 0 && target > 0) {
+    const w = target / 100 * mg / dose;
+    out2.innerHTML = `<p>Add <b class="mono">${fmt(w, 2)} mL</b> of BAC water. Each ${esc(fmt(dose < 1 ? dose * 1000 : dose, 3))} ${dose < 1 ? 'mcg' : 'mg'} dose is then <b class="mono">${fmt(target, 1)} units</b>.</p>
+      ${w > 3 ? '<p class="note">That’s more water than most vials hold comfortably (about 3 mL). Pick a smaller draw.</p>' : ''}`;
+  } else out2.innerHTML = `<p class="info">Enter a target draw in units.</p>`;
+}
+
+/* ---------- editor ---------- */
+function blank() {
+  return { id: uid(), name: '', color: S.peptides.length % 6, components: [{ name: '', mg: null }], water: null, dose: null, doseUnit: 'mcg', doseRef: 0,
+    freq: { type: 'daily' }, start: todayKey(), weeks: null, mixed: todayKey(), notes: '' };
+}
+function openEditor(id) {
+  const p = id ? S.peptides.find(x => x.id === id) : null;
+  draft = p ? clone(p) : blank(); editingId = p ? id : null; delArm = false;
+  renderEditor(); $('#sheet').hidden = false; setTimeout(() => { const f = $('#f-name'); if (f && !p) f.focus(); }, 30);
+}
+function closeEditor() { $('#sheet').hidden = true; draft = null; }
+const nv = v => v == null ? '' : esc(v);
+function renderEditor() {
+  const d = draft, multi = d.components.length > 1, f = d.freq || { type: 'none' };
+  $('#sheetCard').innerHTML = `
+    <div class="row between"><h2>${editingId ? 'Edit ' + esc(d.name || 'peptide') : 'Add peptide'}</h2><button class="ghost" data-act="close">Close</button></div>
+    <label class="field"><span>Name</span><input id="f-name" value="${nv(d.name)}" placeholder="e.g. Tesamorelin" autocomplete="off"></label>
+    <div class="field"><span>Color</span><div class="swatches">${[0, 1, 2, 3, 4, 5].map(i => `<label style="--c:${colorVar(i)}" aria-label="Color ${i + 1}"><input type="radio" name="f-color" value="${i}"${d.color === i ? ' checked' : ''}></label>`).join('')}</div></div>
+
+    <fieldset><legend>Vial</legend>
+      ${d.components.map((c, i) => `<div class="${multi ? 'grid3' : ''}">
+        ${multi ? `<label class="field"><span>Peptide ${i + 1}</span><input id="f-cn-${i}" value="${nv(c.name)}" placeholder="e.g. BPC-157"></label>` : ''}
+        <label class="field"><span>${multi ? 'mg' : 'Vial size (mg)'}</span><input id="f-cm-${i}" type="number" inputmode="decimal" min="0" step="any" value="${nv(c.mg)}" placeholder="10"></label>
+      </div>`).join('')}
+      <div class="row">${multi ? `<button class="ghost" data-act="rmcomp">Remove last peptide</button>` : ''}<button class="ghost" data-act="addcomp">+ ${multi ? 'Add another' : 'It’s a blend (add another peptide)'}</button></div>
+      <div class="grid2">
+        <label class="field"><span>BAC water added (mL)</span><input id="f-water" type="number" inputmode="decimal" min="0" step="any" value="${nv(d.water)}" placeholder="2"></label>
+        <label class="field"><span>Date you mixed this vial</span><input id="f-mixed" type="date" value="${nv(d.mixed)}"></label>
+      </div>
+    </fieldset>
+
+    <fieldset><legend>Dose</legend>
+      <label class="check"><input type="checkbox" id="f-titrate"${d.titrate ? ' checked' : ''}> Increase the dose over time (titration)</label>
+      ${d.titrate ? `
+      <label class="field"><span>Unit</span><select id="f-unit"><option value="mcg"${d.doseUnit === 'mcg' ? ' selected' : ''}>mcg</option><option value="mg"${d.doseUnit === 'mg' ? ' selected' : ''}>mg</option></select></label>
+      <p class="small muted">Weeks count from the start date below. The last step keeps going until the course ends.</p>
+      ${(d.steps || []).map((x, i, all) => { const a = all.slice(0, i).reduce((t, y) => t + (+y.weeks || 0), 0); const last = i === all.length - 1;
+        return `<div class="steprow">
+          ${last ? `<div class="onward">Step ${i + 1}: week ${a + 1} onward</div>` : `<label class="field"><span>Step ${i + 1}: for how many weeks</span><input id="f-sw-${i}" type="number" min="1" step="1" value="${nv(x.weeks)}" placeholder="1"></label>`}
+          <label class="field"><span>Dose (${esc(d.doseUnit)})</span><input id="f-sd-${i}" type="number" inputmode="decimal" min="0" step="any" value="${nv(x.dose)}"></label>
+        </div>`; }).join('')}
+      <div class="row">${(d.steps || []).length > 2 ? `<button class="ghost" data-act="rmstep">Remove a step</button>` : ''}<button class="ghost" data-act="addstep">+ Add a step</button></div>`
+      : `<div class="grid3">
+        <label class="field"><span>Amount per dose</span><input id="f-dose" type="number" inputmode="decimal" min="0" step="any" value="${nv(d.dose)}" placeholder="250"></label>
+        <label class="field"><span>Unit</span><select id="f-unit"><option value="mcg"${d.doseUnit === 'mcg' ? ' selected' : ''}>mcg</option><option value="mg"${d.doseUnit === 'mg' ? ' selected' : ''}>mg</option></select></label>
+      </div>`}
+      ${multi ? `<label class="field"><span>Dose is measured by</span><select id="f-ref">${d.components.map((c, i) => `<option value="${i}"${(d.doseRef || 0) === i ? ' selected' : ''}>${esc(c.name || 'Peptide ' + (i + 1))}</option>`).join('')}</select></label>` : ''}
+      <div class="preview" id="f-preview"></div>
+    </fieldset>
+
+    <fieldset><legend>Schedule</legend>
+      <label class="field"><span>How often</span><select id="f-ftype">
+        <option value="daily"${f.type === 'daily' ? ' selected' : ''}>Every day</option>
+        <option value="days"${f.type === 'days' ? ' selected' : ''}>Certain days of the week (e.g. once a week)</option>
+        <option value="interval"${f.type === 'interval' ? ' selected' : ''}>Every few days</option>
+        <option value="none"${f.type === 'none' ? ' selected' : ''}>Not set yet</option>
+      </select></label>
+      ${f.type === 'days' ? `<div class="dow">${[1, 2, 3, 4, 5, 6, 0].map(i => `<label><input type="checkbox" id="f-d-${i}"${(f.days || []).includes(i) ? ' checked' : ''}>${DOW[i]}</label>`).join('')}</div>` : ''}
+      ${f.type === 'interval' ? `<label class="field"><span>Every how many days</span><input id="f-int" type="number" min="2" step="1" value="${nv(f.n || 2)}"></label>` : ''}
+      <div class="grid2">
+        <label class="field"><span>Start date</span><input id="f-start" type="date" value="${nv(d.start)}"></label>
+        <label class="field"><span>Length (weeks)</span><input id="f-weeks" type="number" min="1" step="1" value="${nv(d.weeks)}" ${d.weeks ? '' : 'disabled'} placeholder="8"></label>
+      </div>
+      <label class="check"><input type="checkbox" id="f-ongoing"${d.weeks ? '' : ' checked'}> No end date</label>
+    </fieldset>
+
+    <label class="field"><span>Notes</span><input id="f-notes" value="${nv(d.notes)}" placeholder="e.g. at night, empty stomach"></label>
+
+    <div class="row between">
+      ${editingId ? `<button class="danger" data-act="delete">${delArm ? 'Tap again to delete' : 'Delete'}</button>` : '<span></span>'}
+      <div class="row"><button data-act="close">Cancel</button><button class="primary" data-act="save">Save</button></div>
+    </div>`;
+  updatePreview();
+}
+function readEditor() {
+  const d = draft; const val = id => { const el = $('#' + id); return el ? el.value : ''; };
+  const num = id => { const v = val(id).trim(); return v === '' ? null : +v; };
+  d.name = val('f-name').trim();
+  const col = document.querySelector('input[name="f-color"]:checked'); if (col) d.color = +col.value;
+  const multi = d.components.length > 1;
+  d.components = d.components.map((c, i) => ({ name: multi ? val('f-cn-' + i).trim() : d.name, mg: num('f-cm-' + i) }));
+  d.water = num('f-water'); d.mixed = val('f-mixed') || null;
+  d.titrate = !!($('#f-titrate') && $('#f-titrate').checked);
+  if ($('#f-dose')) d.dose = num('f-dose');
+  if ($('#f-sd-0')) d.steps = (d.steps || []).map((x, i, all) => ({ weeks: i === all.length - 1 ? null : (Math.round(num('f-sw-' + i) || 0) || null), dose: num('f-sd-' + i) }));
+  d.doseUnit = val('f-unit') || 'mcg';
+  d.doseRef = multi && $('#f-ref') ? +val('f-ref') : 0;
+  const ft = val('f-ftype');
+  if (ft === 'none') d.freq = null;
+  else if (ft === 'days') d.freq = { type: 'days', days: [0, 1, 2, 3, 4, 5, 6].filter(i => $('#f-d-' + i) && $('#f-d-' + i).checked) };
+  else if (ft === 'interval') d.freq = { type: 'interval', n: Math.max(2, Math.round(num('f-int') || 2)) };
+  else d.freq = { type: 'daily' };
+  d.start = val('f-start') || todayKey();
+  d.weeks = $('#f-ongoing').checked ? null : (Math.round(num('f-weeks') || 0) || null);
+  d.notes = val('f-notes').trim();
+}
+function updatePreview() {
+  const el = $('#f-preview'); if (!el) return;
+  const c = compute(draft);
+  if (stepsOf(draft)) {
+    const steps = draft.steps.map(x => compute(Object.assign({}, draft, { titrate: false, dose: x.dose })));
+    const anyOk = steps.some(x => x.ok);
+    el.innerHTML = anyOk ? `<span class="label">Units to draw at each step</span><div style="--c:${colorVar(draft.color)}">${stepsTable(draft, todayKey())}</div>${steps.map(warnings).find(Boolean) || ''}`
+      : `<p class="info">Fill in vial size, BAC water and each step's dose to see the draws.</p>`;
+    return;
+  }
+  el.innerHTML = c.ok ? `<div class="draw" style="--c:${colorVar(draft.color)}"><div class="big">${fmt(c.units, 1)}<span>units</span></div><div class="small muted mono">${fmt(c.ml, 3)} mL · ${fmt(c.conc, 3)} mg/mL · ${c.perVial} doses per vial</div></div>
+    ${syringe(c.units, c.cap, colorVar(draft.color))}${partsLine(c)}${warnings(c)}`
+    : `<p class="info">Fill in vial size, BAC water and dose to see the draw.</p>`;
+}
+
+/* ---------- template ---------- */
+function template() {
+  const t = todayKey(), wd = new Date().getDay();
+  const mk = (name, color, extra) => Object.assign(blank(), { name, color, components: [{ name, mg: null }] }, extra);
+  S.peptides = [
+    mk('Tesamorelin', 0, { freq: { type: 'daily' }, weeks: 8, doseUnit: 'mg', titrate: true,
+      steps: [{ weeks: 1, dose: 0.5 }, { weeks: 1, dose: 1 }, { weeks: 1, dose: 1.5 }, { weeks: null, dose: 4 }] }),
+    mk('GHK-Cu', 1, { freq: { type: 'daily' } }),
+    mk('Retatrutide', 2, { freq: { type: 'days', days: [wd] }, doseUnit: 'mg' }),
+    mk('NAD+', 3, { freq: null, doseUnit: 'mg' }),
+    mk('BPC-157 / TB-500', 4, { freq: null, components: [{ name: 'BPC-157', mg: null }, { name: 'TB-500', mg: null }] }),
+  ];
+  S.peptides.forEach(p => { p.start = t; p.mixed = t; });
+  persist('stack'); render();
+  toast('Stack added. Tap “Finish setup” on each one to add your vial details.');
+}
+
+/* ---------- logging ---------- */
+function logDose(pid) {
+  const p = S.peptides.find(x => x.id === pid); if (!p) return;
+  const c = compute(p, selDate); const m = selDate.slice(0, 7);
+  (L[m] ||= []).push({ id: uid(), pid, date: selDate, at: new Date().toISOString(), doseMg: c.ok ? c.doseMg : 0, units: c.ok ? +c.units.toFixed(2) : 0, label: doseText(p, selDate) });
+  persist('log-' + m); render();
+}
+function unlog(pid) {
+  const m = selDate.slice(0, 7); const list = L[m] || [];
+  const i = list.map(l => l.pid === pid && l.date === selDate).lastIndexOf(true);
+  if (i >= 0) { list.splice(i, 1); persist('log-' + m); render(); }
+}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 3600); }
+
+/* ---------- events ---------- */
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('[data-tab]'); if (!b) return;
+  tab = b.dataset.tab; try { localStorage.setItem('peptide-log-tab', tab); } catch {}
+  render();
+});
+document.addEventListener('click', async e => {
+  const day = e.target.closest('[data-day]'); if (day) { selDate = day.dataset.day; render(); return; }
+  const wk = e.target.closest('[data-week]'); if (wk) { selDate = keyOf(addDays(parseKey(selDate), +wk.dataset.week)); render(); return; }
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  if (act === 'template') template();
+  else if (act === 'add') openEditor(null);
+  else if (act === 'edit') openEditor(id);
+  else if (act === 'close') closeEditor();
+  else if (act === 'log') logDose(id);
+  else if (act === 'unlog') unlog(id);
+  else if (act === 'addcomp') { readEditor(); if (draft.components.length === 1) draft.components[0].name = draft.name; draft.components.push({ name: '', mg: null }); renderEditor(); }
+  else if (act === 'addstep') { readEditor(); const st = draft.steps; st[st.length - 1].weeks = st[st.length - 1].weeks || 1; st.push({ weeks: null, dose: null }); renderEditor(); }
+  else if (act === 'rmstep') { readEditor(); draft.steps.splice(draft.steps.length - 2, 1); renderEditor(); }
+  else if (act === 'rmcomp') { readEditor(); draft.components.pop(); draft.doseRef = 0; renderEditor(); }
+  else if (act === 'save') {
+    readEditor();
+    if (!draft.name) { toast('Give it a name first.'); $('#f-name').focus(); return; }
+    if (draft.components.length === 1) draft.components[0].name = draft.name;
+    const i = S.peptides.findIndex(x => x.id === draft.id);
+    if (i >= 0) S.peptides[i] = draft; else S.peptides.push(draft);
+    const name = draft.name; persist('stack'); closeEditor(); render(); toast(`Saved ${name}.`);
+  }
+  else if (act === 'delete') {
+    if (!delArm) { readEditor(); delArm = true; renderEditor(); return; }
+    S.peptides = S.peptides.filter(x => x.id !== editingId); persist('stack'); closeEditor(); render(); toast('Deleted.');
+  }
+  else if (act === 'newvial') {
+    const p = S.peptides.find(x => x.id === id); if (!p) return;
+    p.mixed = todayKey(); persist('stack'); render(); toast(`New ${p.name} vial counted from today.`);
+  }
+  else if (act === 'delentry') {
+    const list = L[b.dataset.m] || []; const i = list.findIndex(x => x.id === id);
+    if (i >= 0) { list.splice(i, 1); persist('log-' + b.dataset.m); render(); }
+  }
+  else if (act === 'backup') {
+    const text = JSON.stringify({ app: 'peptide-log', v: 1, stack: S, logs: L });
+    try { await navigator.clipboard.writeText(text); toast('Backup copied. Paste it into a note to keep it safe.'); }
+    catch { $('#backupArea').innerHTML = `<label class="field"><span>Select all and copy this text</span><textarea id="bk" readonly>${esc(text)}</textarea></label>`; $('#bk').select(); }
+  }
+  else if (act === 'restore-open') {
+    $('#backupArea').innerHTML = `<label class="field"><span>Paste a backup. This replaces everything currently in the app.</span><textarea id="rs"></textarea></label><div><button class="danger" data-act="restore">Replace with this backup</button></div>`;
+  }
+  else if (act === 'restore') {
+    try {
+      const d = JSON.parse($('#rs').value);
+      if (!d.stack || !Array.isArray(d.stack.peptides)) throw 0;
+      S = { peptides: d.stack.peptides, settings: d.stack.settings || { syringe: 100 } }; L = d.logs || {};
+      persist('stack'); Object.keys(L).forEach(m => persist('log-' + m)); render(); toast('Backup restored.');
+    } catch { toast('That doesn’t look like a Peptide Log backup. Copy the whole text and try again.'); }
+  }
+});
+$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeEditor(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeEditor(); });
+$('#sheetCard').addEventListener('input', e => {
+  if (!draft) return; readEditor(); if (delArm) delArm = false;
+  if (e.target.id === 'f-ongoing') { const w = $('#f-weeks'); w.disabled = e.target.checked; if (!e.target.checked && !w.value) { w.value = 8; readEditor(); } }
+  updatePreview();
+});
+$('#sheetCard').addEventListener('change', e => {
+  if (e.target.id === 'f-titrate' || e.target.id === 'f-unit') { readEditor(); if (draft.titrate && !(draft.steps && draft.steps.length > 1)) draft.steps = [{ weeks: 1, dose: draft.dose }, { weeks: null, dose: null }]; renderEditor(); return; }
+  if (e.target.id === 'f-ftype' || (e.target.id || '').startsWith('f-cn-')) { readEditor(); renderEditor(); } });
+document.addEventListener('input', e => {
+  if ((e.target.id || '').startsWith('c-')) calcUpdate();
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'c-unit') calcUpdate();
+  if (e.target.id === 's-syr') { S.settings.syringe = +e.target.value; persist('stack'); render(); }
+});
+
+/* ---------- boot ---------- */
+render();
+initStore();
+setTimeout(() => { if (!loaded && store.mode !== 'db') fallbackLocal(); }, 12000);
+})();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+</script>
+</body>
+</html>
