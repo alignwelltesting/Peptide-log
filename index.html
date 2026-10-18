@@ -151,9 +151,16 @@ legend { font: 700 0.95rem var(--f-display); margin-bottom: 4px; padding: 0 }
 @media (min-width: 680px) { .sheet { align-items: center; padding: 32px 16px } .sheet-card { border-radius: 16px } }
 
 .hist-day { display: grid; gap: 6px }
-.hist-item { display: grid; grid-template-columns: 10px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line) }
+.hist-item { display: grid; grid-template-columns: 10px 1fr auto auto auto; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line) }
 .hist-item .sw { width: 10px; height: 10px; border-radius: 50%; background: var(--c) }
 .hist-item:last-child { border-bottom: 0 }
+.loglist { display: grid; gap: 2px }
+.dose.skipped { opacity: .75 }
+.day .dots b.skip { opacity: 1; background: transparent; box-shadow: inset 0 0 0 1.5px var(--c) }
+.missed { display: grid; gap: 4px; padding: 8px 0 8px 10px; border-left: 3px solid var(--c) }
+.missed .row button { padding: 6px 10px }
+.logline { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 0.9rem; padding: 2px 0 2px 10px; border-left: 3px solid var(--c) }
+.amt-in { font: 700 1.6rem var(--f-mono); padding: 10px 12px }
 .xbtn { padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: 1rem }
 
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 0.9rem; z-index: 30; max-width: calc(100% - 32px) }
@@ -221,7 +228,12 @@ let draft = null, editingId = null, delArm = false;
 try { const t = localStorage.getItem('peptide-log-tab'); if (t) tab = t; } catch {}
 
 const allLogs = () => Object.values(L).flat();
-const logsFor = (pid, date) => allLogs().filter(l => l.pid === pid && l.date === date);
+// A "skipped" entry records a scheduled dose deliberately not taken; it never counts as taken.
+const logsFor = (pid, date) => allLogs().filter(l => l.pid === pid && l.date === date && !l.skipped);
+const skipsFor = (pid, date) => allLogs().filter(l => l.pid === pid && l.date === date && l.skipped);
+const TIMES = [['morning', 'Morning'], ['midday', 'Midday'], ['evening', 'Evening'], ['bedtime', 'Bedtime']];
+const timeLabel = p => (TIMES.find(x => x[0] === p.time) || [])[1] || '';
+const timeOrder = p => { const i = TIMES.findIndex(x => x[0] === p.time); return i < 0 ? TIMES.length : i; };
 
 /* ---------- storage ---------- */
 const LS_KEY = 'peptide-log-data-v1';
@@ -282,15 +294,46 @@ function fallbackLocal() {
 }
 
 /* ---------- schedule math ---------- */
-function endKey(p) { return p.weeks ? keyOf(addDays(parseKey(p.start), p.weeks * 7 - 1)) : null; }
+/* Pauses: p.pauses = [{ from, to }], to = last paused day (null while still paused). Paused days don't count toward
+   the course length, titration weeks or every-N-days spacing, so all of those move back by the days paused. */
+const pausesOf = p => Array.isArray(p.pauses) ? p.pauses : [];
+const openPause = p => pausesOf(p).find(z => !z.to) || null;
+const inPause = (p, k) => pausesOf(p).some(z => k >= z.from && (!z.to || k <= z.to));
+// Paused days from the start date up to (not including) k. A pause still running is counted up to today.
+function pausedBefore(p, k) {
+  let n = 0; const cap = keyOf(addDays(parseKey(k), -1)), t = todayKey();
+  for (const z of pausesOf(p)) {
+    const a = z.from < p.start ? p.start : z.from; let b = z.to || t; if (b > cap) b = cap;
+    if (b >= a) n += daysBetween(a, b) + 1;
+  }
+  return n;
+}
+const activeDay = (p, k) => daysBetween(p.start, k) - pausedBefore(p, k);
+// Calendar date of active day n (start date = 0), skipping paused days.
+function dateAt(p, n) {
+  if (!pausesOf(p).length) return keyOf(addDays(parseKey(p.start), n));
+  let d = parseKey(p.start), c = 0; const t = todayKey();
+  for (let i = 0; i < 5000; i++) {
+    const k = keyOf(d);
+    if (!pausesOf(p).some(z => k >= z.from && k <= (z.to || t))) { if (c === n) return k; c++; }
+    d = addDays(d, 1);
+  }
+  return keyOf(d);
+}
+let endCache = new Map();   // cleared on every render; endKey is called inside day-by-day loops
+function endKey(p) {
+  if (!p.weeks) return null;
+  if (!endCache.has(p)) endCache.set(p, dateAt(p, p.weeks * 7 - 1));
+  return endCache.get(p);
+}
 function isDue(p, k) {
   if (!p.freq || !p.start || p.paused) return false;
-  if (k < p.start) return false;
+  if (k < p.start || inPause(p, k)) return false;
   const end = endKey(p); if (end && k > end) return false;
   const f = p.freq;
   if (f.type === 'daily') return true;
   if (f.type === 'days') return (f.days || []).includes(parseKey(k).getDay());
-  if (f.type === 'interval') { const n = Math.max(1, +f.n || 1); return daysBetween(p.start, k) % n === 0; }
+  if (f.type === 'interval') { const n = Math.max(1, +f.n || 1); return activeDay(p, k) % n === 0; }
   return false;
 }
 function freqLabel(p) {
@@ -307,7 +350,7 @@ const stepsOf = p => (p.titrate && Array.isArray(p.steps) && p.steps.length) ? p
 const toMg = (p, v) => (+v || 0) * (p.doseUnit === 'mcg' ? 0.001 : 1);
 function stepIndex(p, k) {
   const st = stepsOf(p); if (!st) return -1;
-  const wk = p.start && k >= p.start ? Math.floor(daysBetween(p.start, k) / 7) : 0;
+  const wk = p.start && k >= p.start ? Math.floor(activeDay(p, k) / 7) : 0;
   let acc = 0;
   for (let i = 0; i < st.length; i++) { if (i === st.length - 1 || !(+st[i].weeks > 0)) return i; acc += +st[i].weeks; if (wk < acc) return i; }
   return st.length - 1;
@@ -318,7 +361,7 @@ function prevDue(p, k) { let d = parseKey(k); for (let i = 0; i < 60; i++) { d =
 function nextStep(p, k) {
   const st = stepsOf(p); if (!st) return null; const i = stepIndex(p, k);
   if (i >= st.length - 1 || !(+st[i].weeks > 0)) return null;
-  return { date: keyOf(addDays(parseKey(p.start), stepWeeks(p, i + 1) * 7)), dose: +st[i + 1].dose || 0 };
+  return { date: dateAt(p, stepWeeks(p, i + 1) * 7), dose: +st[i + 1].dose || 0 };
 }
 function needsSetup(p) {
   const comps = p.components || [];
@@ -337,7 +380,8 @@ function compute(p, k = todayKey()) {
   const ml = doseMg / conc;
   const units = ml * 100;
   const parts = comps.map((c, i) => ({ name: c.name || p.name, mg: (+c.mg || 0) / water * ml, ref: i === ri }));
-  const used = allLogs().filter(l => l.pid === p.id && (!p.mixed || l.date >= p.mixed)).reduce((a, l) => a + (+l.doseMg || 0), 0);
+  // Doses count against the current vial if logged after it was mixed (mixedAt separates same-day doses).
+  const used = allLogs().filter(l => l.pid === p.id && (!p.mixed || l.date > p.mixed || (l.date === p.mixed && (!p.mixedAt || (l.at || '') >= p.mixedAt)))).reduce((a, l) => a + (+l.doseMg || 0), 0);
   const remaining = Math.max(0, ref.mg - used);
   return { ok: true, cap, conc, ml, units, dose, doseMg, parts, refName: ref.name || p.name, refMg: +ref.mg,
     perVial: Math.floor(ref.mg / doseMg + 1e-9), remaining, dosesLeft: Math.floor(remaining / doseMg + 1e-9),
@@ -364,16 +408,77 @@ function adherence(p) {
   if (!p.start || !p.freq) return null;
   const t = todayKey(); const end = endKey(p); const last = end && end < t ? end : t;
   if (last < p.start) return null;
-  let due = 0, taken = 0, d = parseKey(p.start);
-  for (let i = 0; i < 1500; i++) { const k = keyOf(d); if (k > last) break; if (isDue(p, k)) { due++; if (logsFor(p.id, k).length) taken++; } d = addDays(d, 1); }
-  return { due, taken };
+  let due = 0, taken = 0, skipped = 0, d = parseKey(p.start);
+  for (let i = 0; i < 1500; i++) {
+    const k = keyOf(d); if (k > last) break;
+    if (isDue(p, k)) { due++; if (logsFor(p.id, k).length) taken++; else if (skipsFor(p.id, k).length) skipped++; }
+    d = addDays(d, 1);
+  }
+  return { due, taken, skipped };
+}
+const adherenceText = a => `${a.taken} of ${a.due} scheduled doses taken${a.skipped ? ` · ${a.skipped} skipped` : ''}`;
+// Scheduled doses in the past week with nothing logged (neither taken nor skipped).
+function missedDoses() {
+  const out = [];
+  for (let i = 7; i >= 1; i--) {
+    const k = keyOf(addDays(new Date(), -i));
+    for (const p of S.peptides) if (!needsSetup(p) && isDue(p, k) && !logsFor(p.id, k).length && !skipsFor(p.id, k).length) out.push({ p, k });
+  }
+  return out;
+}
+/* Vial age: p.vialDays = how many days a mixed vial is good for (set by the person; null = not tracked). */
+function vialAge(p) {
+  if (!p.mixed) return null;
+  const age = daysBetween(p.mixed, todayKey()), life = +p.vialDays || 0;
+  return { age, life, expires: life ? keyOf(addDays(parseKey(p.mixed), life)) : null, left: life ? life - age : null };
+}
+function vialNote(p) {
+  const v = vialAge(p); if (!v || !v.life) return '';
+  if (v.left <= 0) return `<p class="note">This vial was mixed ${v.age} days ago, past the ${v.life} days you set. Mix a new vial.</p>`;
+  if (v.left <= 3) return `<p class="note">This vial reaches its ${v.life}-day limit ${v.left === 1 ? 'tomorrow' : 'in ' + v.left + ' days'} (${esc(fmtDate(v.expires))}).</p>`;
+  return '';
+}
+// Average days between doses, for "a new vial about every N days".
+function spacing(p) {
+  const f = p.freq || {};
+  if (f.type === 'interval') return Math.max(1, +f.n || 1);
+  if (f.type === 'days' && (f.days || []).length) return 7 / f.days.length;
+  return 1;
+}
+/* Heads-up for the next dose increase: new draw, how far one vial goes, and vials needed to finish the course.
+   Leftover mg that can't make a full dose is not counted (no combining two vials in one draw). */
+function stepHeadsUp(p, k, within) {
+  const n = nextStep(p, k); if (!n || !n.dose) return '';
+  const until = daysBetween(k, n.date); if (until < 1 || until > within) return '';
+  const now = compute(p, k), c = compute(Object.assign({}, p, { titrate: false, dose: n.dose }), n.date);
+  if (!c.ok) return '';
+  const u = p.doseUnit, vial = `${fmt(c.refMg, 2)} mg vial`;
+  let h = `<b>Dose goes up ${until === 1 ? 'tomorrow' : 'in ' + until + ' days'} (${esc(fmtDate(n.date))}):</b> ${esc(fmt(doseOn(p, k), 3))} \u2192 ${esc(fmt(n.dose, 3))} ${u}, which is <b>${fmt(c.units, 1)} units</b>${now.ok ? ` (now ${fmt(now.units, 1)})` : ''}.`;
+  if (c.perVial < 1) h += ` One ${esc(vial)} doesn\u2019t hold a full dose at that strength.`;
+  else {
+    const extra = c.refMg - c.perVial * c.doseMg;
+    h += ` Each ${esc(vial)} gives ${c.perVial} full dose${c.perVial === 1 ? '' : 's'}${extra > 1e-6 ? ` (${esc(mass(extra))} left over)` : ''}, so plan on a new vial about every ${fmt(c.perVial * spacing(p), 1)} days.`;
+    const end = endKey(p);
+    if (end) {
+      let left = now.ok ? now.remaining : 0, vials = 0, d = new Date(); if (logsFor(p.id, todayKey()).length) d = addDays(d, 1);
+      for (let i = 0; i < 1500; i++) {
+        const x = keyOf(d); if (x > end) break;
+        if (isDue(p, x)) { const need = toMg(p, doseOn(p, x)); if (left < need - 1e-9) { vials++; left = c.refMg; } left -= need; }
+        d = addDays(d, 1);
+      }
+      h += ` To finish the course (${esc(fmtDate(end))}) you\u2019ll need about <b>${vials} more vial${vials === 1 ? '' : 's'}</b> of this size.`;
+    }
+  }
+  if (c.over) h += ` That\u2019s more than one ${c.cap}-unit syringe, so it would take two draws.`;
+  return `<p class="up">${h}</p>`;
 }
 function courseChip(p, k) {
   if (!p.start) return '';
   if (k < p.start) return `<span class="chip">Starts ${esc(fmtDate(p.start))}</span>`;
   const end = endKey(p);
   if (end && k > end) return `<span class="chip ok">Course complete</span>`;
-  if (p.weeks) { const day = daysBetween(p.start, k) + 1; return `<span class="chip">Day ${day} of ${p.weeks * 7}</span>`; }
+  if (inPause(p, k)) return `<span class="chip warn">Paused</span>`;
+  if (p.weeks) { const day = activeDay(p, k) + 1; return `<span class="chip">Day ${day} of ${p.weeks * 7}</span>`; }
   return `<span class="chip">${esc(freqLabel(p))}</span>`;
 }
 
@@ -418,11 +523,12 @@ function stepsTable(p, k) {
     const a = stepWeeks(p, i), last = i === st.length - 1 || !(+x.weeks > 0);
     const label = last ? `Week ${a + 1} onward` : (+x.weeks === 1 ? `Week ${a + 1}` : `Weeks ${a + 1}\u2013${a + +x.weeks}`);
     const c = compute(Object.assign({}, p, { titrate: false, dose: x.dose }), k);
-    return `<div class="st${i === cur ? ' cur' : i < cur ? ' done' : ''}"><span>${label}${p.start ? ` <span class="small muted">from ${esc(fmtDate(keyOf(addDays(parseKey(p.start), a * 7))))}</span>` : ''}</span><span class="mono">${x.dose ? esc(fmt(+x.dose, 3) + ' ' + p.doseUnit) : '—'}</span><span class="mono">${c.ok ? fmt(c.units, 1) + ' u' : ''}</span></div>`;}).join('')}</div>`;
+    return `<div class="st${i === cur ? ' cur' : i < cur ? ' done' : ''}"><span>${label}${p.start ? ` <span class="small muted">from ${esc(fmtDate(dateAt(p, a * 7)))}</span>` : ''}</span><span class="mono">${x.dose ? esc(fmt(+x.dose, 3) + ' ' + p.doseUnit) : '—'}</span><span class="mono">${c.ok ? fmt(c.units, 1) + ' u' : ''}</span></div>`;}).join('')}</div>`;
 }
 
 /* ---------- views ---------- */
 function render() {
+  endCache = new Map();
   document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   const v = $('#view');
   if (!loaded) return;
@@ -446,7 +552,7 @@ function weekStrip() {
   for (let i = 0; i < 7; i++) {
     const d = addDays(monday, i), k = keyOf(d);
     const due = S.peptides.filter(p => isDue(p, k));
-    const dots = due.slice(0, 6).map(p => `<b style="--c:${colorVar(p.color)}" class="${logsFor(p.id, k).length ? 'done' : ''}"></b>`).join('');
+    const dots = due.slice(0, 6).map(p => `<b style="--c:${colorVar(p.color)}" class="${logsFor(p.id, k).length ? 'done' : skipsFor(p.id, k).length ? 'skip' : ''}"></b>`).join('');
     cells += `<button class="day${k === t ? ' is-today' : ''}" aria-pressed="${k === selDate}" data-day="${k}" aria-label="${esc(fmtDate(k))}, ${due.length} doses">
       <span class="dw">${DOW[d.getDay()]}</span><span class="dn">${d.getDate()}</span><span class="dots">${dots}</span></button>`;
   }
@@ -455,20 +561,36 @@ function weekStrip() {
 
 function doseCard(p, k) {
   const c = compute(p, k); const logs = logsFor(p.id, k); const col = colorVar(p.color);
-  const t = todayKey(); const future = k > t;
+  const t = todayKey(); const future = k > t; const skipped = !logs.length && skipsFor(p.id, k).length;
   let action;
   if (needsSetup(p)) action = `<button data-act="edit" data-id="${p.id}">Finish setup</button>`;
-  else if (logs.length) action = `<div class="row between"><span class="chip ok">Taken ${esc(fmtTime(logs[0].at))}</span><button class="ghost" data-act="unlog" data-id="${p.id}">Undo</button></div>`;
+  else if (logs.length) action = takenBlock(p, logs, c);
+  else if (skipped) action = `<div class="row between"><span class="chip">Skipped</span><button class="ghost" data-act="unlog" data-id="${p.id}">Undo</button></div>`;
   else if (future) action = `<button disabled>Scheduled</button>`;
-  else action = `<button class="primary" data-act="log" data-id="${p.id}">Mark taken</button>`;
-  return `<article class="dose${logs.length ? ' taken' : ''}" style="--c:${col}">
-    <div class="dose-head"><h3>${esc(p.name)}</h3>${courseChip(p, k)}</div>
+  else action = `<div class="row"><button class="primary" data-act="log" data-id="${p.id}">Mark taken</button><button data-act="amount" data-id="${p.id}">Took a different amount</button><button class="ghost" data-act="skip" data-id="${p.id}">Skip</button></div>`;
+  const tl = timeLabel(p);
+  return `<article class="dose${logs.length ? ' taken' : ''}${skipped ? ' skipped' : ''}" style="--c:${col}">
+    <div class="dose-head"><div>${tl ? `<span class="label">${esc(tl)}</span>` : ''}<h3>${esc(p.name)}</h3></div>${courseChip(p, k)}</div>
     ${c.ok ? `<div class="draw"><div class="big">${fmt(c.units, 1)}<span>units</span></div>
       <div class="small muted mono">${fmt(c.ml, 3)} mL · ${esc(doseText(p, k))}${c.parts.length > 1 ? ' ' + esc(c.refName) : ''}</div></div>
-      ${syringe(c.units, c.cap, col)}${partsLine(c)}${titrationLine(p, k)}${warnings(c)}`
+      ${syringe(c.units, c.cap, col)}${partsLine(c)}${titrationLine(p, k)}${stepHeadsUp(p, k, 7)}${warnings(c)}${k === t ? vialNote(p) : ''}`
       : `<p class="info">Add the vial size, BAC water and dose to see how many units to draw.</p>`}
+    ${p.notes ? `<p class="info">${esc(p.notes)}</p>` : ''}
     ${action}
   </article>`;
+}
+
+// What was actually drawn that day: one line per log entry, each editable, plus the difference from the plan.
+function takenBlock(p, logs, c) {
+  const total = logs.reduce((a, l) => a + (+l.units || 0), 0);
+  const diff = c.ok ? total - c.units : 0;
+  const off = Math.abs(diff) >= 0.05;
+  const rows = logs.map(l => `<div class="logline"><span><b class="mono">${fmt(+l.units, 1)} u</b> <span class="muted">· ${esc(l.label || mass(l.doseMg))} · ${esc(fmtTime(l.at))}</span></span><button class="ghost" data-act="amount" data-id="${p.id}" data-e="${l.id}">Change</button></div>`).join('');
+  return `<div class="stack" style="gap:8px">
+    <div class="row"><span class="chip ok">Taken${logs.length > 1 ? ` · ${fmt(total, 1)} units total` : ''}</span>${off ? `<span class="chip warn">${diff > 0 ? '+' : '−'}${fmt(Math.abs(diff), 1)} units vs. plan</span>` : ''}</div>
+    <div class="loglist">${rows}</div>
+    <div class="row"><button data-act="amount" data-id="${p.id}" data-add="1">Add more</button><button class="ghost" data-act="unlog" data-id="${p.id}">Undo${logs.length > 1 ? ' last' : ''}</button></div>
+  </div>`;
 }
 
 function titrationLine(p, k) {
@@ -476,17 +598,19 @@ function titrationLine(p, k) {
   const pd = prevDue(p, k), now = doseOn(p, k), u = p.doseUnit;
   if (pd && doseOn(p, pd) !== now) return `<p class="up"><b>Dose goes up today:</b> ${esc(fmt(doseOn(p, pd), 3))} \u2192 ${esc(fmt(now, 3))} ${u}. Draw the new amount shown above.</p>`;
   const n = nextStep(p, k), i = stepIndex(p, k), total = stepsOf(p).length;
-  return `<p class="info">Step ${i + 1} of ${total}${n ? ` · goes up to ${esc(fmt(n.dose, 3))} ${u} on ${esc(fmtDate(n.date))}` : ' · final dose'}</p>`;
+  const soon = n && daysBetween(k, n.date) <= 7;
+  return `<p class="info">Step ${i + 1} of ${total}${n ? (soon ? '' : ` · goes up to ${esc(fmt(n.dose, 3))} ${u} on ${esc(fmtDate(n.date))}`) : ' · final dose'}</p>`;
 }
 function viewToday() {
   if (!S.peptides.length) return emptyState();
   const k = selDate, t = todayKey();
-  const due = S.peptides.filter(p => isDue(p, k));
+  const due = S.peptides.filter(p => isDue(p, k)).sort((a, b) => timeOrder(a) - timeOrder(b));
   const setup = S.peptides.filter(p => needsSetup(p) && !due.includes(p));
   const off = S.peptides.filter(p => !due.includes(p) && !needsSetup(p));
-  const done = due.filter(p => logsFor(p.id, k).length).length;
+  const done = due.filter(p => logsFor(p.id, k).length || skipsFor(p.id, k).length).length;
   const heading = k === t ? 'Today' : fmtDate(k);
   let h = weekStrip();
+  if (k === t) h += backupBanner() + missedPanel();
   h += `<div class="row between"><h2>${esc(heading)}</h2><span class="small muted">${due.length ? `${done} of ${due.length} done` : 'Nothing scheduled'}</span></div>`;
   if (k !== t) h += `<div><button class="ghost" data-day="${t}">Back to today</button></div>`;
   h += due.map(p => doseCard(p, k)).join('');
@@ -494,9 +618,32 @@ function viewToday() {
     ${setup.map(p => `<div class="row between"><span>${esc(p.name)}</span><button data-act="edit" data-id="${p.id}">Finish setup</button></div>`).join('')}</div>`;
   if (off.length) h += `<div class="panel"><span class="label">Not scheduled this day</span>
     ${off.map(p => { const n = nextDue(p, k); const lg = logsFor(p.id, k).length;
-      return `<div class="row between"><span>${esc(p.name)} <span class="small muted">· ${n ? 'next ' + esc(fmtDate(n)) : (p.weeks && endKey(p) < k ? 'course complete' : 'no upcoming dose')}</span></span>
-      ${lg ? `<button class="ghost" data-act="unlog" data-id="${p.id}">Undo extra dose</button>` : (k <= t ? `<button class="ghost" data-act="log" data-id="${p.id}">Log extra dose</button>` : '')}</div>`; }).join('')}</div>`;
+      return `<div class="row between"><span>${esc(p.name)} <span class="small muted">· ${inPause(p, k) ? 'paused' : n ? 'next ' + esc(fmtDate(n)) : (p.weeks && endKey(p) < k ? 'course complete' : 'no upcoming dose')}</span></span>
+      ${lg ? `<button class="ghost" data-act="unlog" data-id="${p.id}">Undo extra dose</button>` : (k <= t && !needsSetup(p) ? `<button class="ghost" data-act="amount" data-id="${p.id}" data-add="1">Log extra dose</button>` : '')}</div>`; }).join('')}</div>`;
   return h;
+}
+
+function missedPanel() {
+  const m = missedDoses(); if (!m.length) return '';
+  return `<div class="panel" style="gap:10px"><h3>Not logged yet</h3>
+    <p class="small muted">These were scheduled in the past week with nothing logged. Mark each one so your vial count and history stay right.</p>
+    ${m.map(({ p, k }) => { const c = compute(p, k);
+      return `<div class="missed" style="--c:${colorVar(p.color)}"><span><b>${esc(p.name)}</b> <span class="small muted">· ${esc(fmtDate(k))}${c.ok ? ' · ' + fmt(c.units, 1) + ' u' : ''}</span></span>
+      <div class="row"><button data-act="log" data-id="${p.id}" data-d="${k}">Took it</button><button class="ghost" data-act="amount" data-id="${p.id}" data-d="${k}">Different amount</button><button class="ghost" data-act="skip" data-id="${p.id}" data-d="${k}">Skipped</button></div></div>`; }).join('')}
+  </div>`;
+}
+// Reminds to back up when there's logged data and no backup in 7 days (snooze: 3 days).
+function backupInfo() {
+  const last = S.settings.lastBackup; const days = last ? Math.floor((Date.now() - new Date(last)) / 864e5) : null;
+  return { last, days, text: last ? (days === 0 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago') : 'never' };
+}
+function backupBanner() {
+  if (store.mode !== 'local' || !allLogs().length) return '';
+  const b = backupInfo(); if (b.last && b.days < 7) return '';
+  if (S.settings.backupSnooze && Date.now() < +new Date(S.settings.backupSnooze)) return '';
+  return `<div class="panel" style="gap:10px;border-color:var(--warn)"><h3>Back up your log</h3>
+    <p class="small muted">Last backup: ${esc(b.text)}. Your doses are saved only on this phone, so a backup file keeps them safe if Safari data is cleared.</p>
+    <div class="row"><button class="primary" data-act="backupfile">Save backup file</button><button class="ghost" data-act="snooze">Later</button></div></div>`;
 }
 
 function viewStack() {
@@ -504,33 +651,39 @@ function viewStack() {
   if (!S.peptides.length) h += emptyState();
   for (const p of S.peptides) {
     const c = compute(p), col = colorVar(p.color), ro = runOut(p, c), ad = adherence(p), end = endKey(p);
-    const mixedDays = p.mixed ? daysBetween(p.mixed, todayKey()) : null;
+    const mixedDays = p.mixed ? daysBetween(p.mixed, todayKey()) : null, va = vialAge(p), pz = openPause(p);
+    const pausedDays = pausesOf(p).reduce((a, z) => a + Math.max(0, daysBetween(z.from, z.to || todayKey()) + 1), 0);
+    // The vial may need replacing because it's empty or because it's too old, whichever comes first.
+    let need = ro ? (ro.empty ? 'Not enough left for the next dose' : ro.pastEnd ? 'Lasts past course end' : 'New vial needed by ' + esc(fmtDate(ro.date))) : '';
+    if (va && va.expires && (!ro || ro.pastEnd || (ro.date && va.expires < ro.date))) need = va.left <= 0 ? 'Vial is past its age limit' : 'New vial needed by ' + esc(fmtDate(va.expires)) + ' (vial age)';
     const vialPct = c.ok ? Math.round(100 * c.remaining / c.refMg) : 0;
     const contents = (p.components || []).map(x => `${x.mg ? fmt(+x.mg, 2) + ' mg' : '? mg'}${p.components.length > 1 ? ' ' + esc(x.name) : ''}`).join(' + ');
     h += `<article class="dose" style="--c:${col}">
-      <div class="dose-head"><h3>${esc(p.name)}</h3>${needsSetup(p) ? '<span class="chip warn">Finish setup</span>' : `<span class="chip">${esc(freqLabel(p))}</span>`}</div>
+      <div class="dose-head"><div>${timeLabel(p) ? `<span class="label">${esc(timeLabel(p))}</span>` : ''}<h3>${esc(p.name)}</h3></div>${needsSetup(p) ? '<span class="chip warn">Finish setup</span>' : pz ? `<span class="chip warn">Paused since ${esc(fmtDate(pz.from))}</span>` : `<span class="chip">${esc(freqLabel(p))}</span>`}</div>
       <div class="stats">
         <div><span class="label">Vial</span><span class="v">${contents}</span><span class="small muted">${p.water ? fmt(+p.water, 2) + ' mL BAC water' : 'BAC water not set'}</span></div>
         <div><span class="label">${stepsOf(p) ? 'Dose now' : 'Dose'}</span><span class="v">${esc(doseText(p))}</span><span class="small muted">${c.ok ? fmt(c.units, 1) + ' units · ' + fmt(c.ml, 3) + ' mL' : '—'}</span></div>
         <div><span class="label">Strength</span><span class="v">${c.ok ? fmt(c.conc, 3) + ' mg/mL' : '—'}</span><span class="small muted">${c.ok ? fmt(c.conc * 10, 1) + ' mcg per unit' : ''}</span></div>
-        <div><span class="label">Course</span><span class="v">${p.weeks ? p.weeks + ' weeks' : 'Ongoing'}</span><span class="small muted">${p.start ? 'from ' + esc(fmtDate(p.start)) : ''}${end ? ' to ' + esc(fmtDate(end)) : ''}</span></div>
+        <div><span class="label">Course</span><span class="v">${p.weeks ? p.weeks + ' weeks' : 'Ongoing'}</span><span class="small muted">${p.start ? 'from ' + esc(fmtDate(p.start)) : ''}${end ? ' to ' + esc(fmtDate(end)) : ''}${pausedDays ? ` · ${pausedDays} day${pausedDays === 1 ? '' : 's'} paused${pz ? ' so far' : ''}` : ''}</span></div>
       </div>
-      ${stepsOf(p) ? `<div class="stack" style="gap:6px"><span class="label">Dose plan</span>${stepsTable(p, todayKey())}</div>` : ''}
+      ${stepsOf(p) ? `<div class="stack" style="gap:6px"><span class="label">Dose plan</span>${stepsTable(p, todayKey())}${stepHeadsUp(p, todayKey(), 3650)}</div>` : ''}
       ${c.ok ? `<div class="stack" style="gap:6px">
-        <div class="row between small"><span><b class="mono">${c.dosesLeft}</b> of ${c.perVial} doses left${stepsOf(p) ? ' at today\u2019s dose' : ' in this vial'}</span><span class="muted">${ro ? (ro.empty ? 'Not enough left for the next dose' : ro.pastEnd ? 'Lasts past course end' : 'New vial needed by ' + esc(fmtDate(ro.date))) : ''}</span></div>
+        <div class="row between small"><span><b class="mono">${c.dosesLeft}</b> of ${c.perVial} doses left${stepsOf(p) ? ' at today\u2019s dose' : ' in this vial'}</span><span class="muted">${need}</span></div>
         <div class="bar"><i style="width:${vialPct}%"></i></div>
-        <div class="small muted">${mixedDays !== null ? `Mixed ${mixedDays === 0 ? 'today' : mixedDays + (mixedDays === 1 ? ' day' : ' days') + ' ago'}` : ''}${ad ? ` · ${ad.taken} of ${ad.due} scheduled doses taken` : ''}</div>
+        <div class="small muted">${mixedDays !== null ? `Mixed ${mixedDays === 0 ? 'today' : mixedDays + (mixedDays === 1 ? ' day' : ' days') + ' ago'}${va && va.life ? ` (good for ${va.life} days)` : ''}` : ''}${ad ? ` · ${adherenceText(ad)}` : ''}</div>
       </div>` : ''}
-      ${warnings(c)}
+      ${warnings(c)}${vialNote(p)}
       ${p.notes ? `<p class="info">${esc(p.notes)}</p>` : ''}
-      <div class="row"><button data-act="edit" data-id="${p.id}">Edit</button><button data-act="newvial" data-id="${p.id}">Mixed a new vial today</button></div>
+      <div class="row"><button data-act="edit" data-id="${p.id}">Edit</button><button data-act="newvial" data-id="${p.id}">Mixed a new vial</button>${p.freq && !needsSetup(p) ? `<button class="ghost" data-act="${pz ? 'resume' : 'pause'}" data-id="${p.id}">${pz ? 'Resume' : 'Pause'}</button>` : ''}</div>
     </article>`;
   }
   h += `<div class="panel"><h3>Settings</h3>
     <label class="field"><span>Syringe size</span><select id="s-syr">
       ${[[100, '1 mL (100 units)'], [50, '0.5 mL (50 units)'], [30, '0.3 mL (30 units)']].map(([v, l]) => `<option value="${v}"${(S.settings.syringe || 100) == v ? ' selected' : ''}>${l}</option>`).join('')}
     </select></label>
-    <div class="row"><button data-act="backup">Copy backup</button><button data-act="restore-open">Restore from backup</button></div>
+    <div class="stack" style="gap:6px"><span class="label">Backup</span>
+      <p class="small muted">Last backup: ${esc(backupInfo().text)}. “Save backup file” opens the share sheet. Choose Save to Files (iCloud Drive) to keep it off your phone.</p>
+      <div class="row"><button class="primary" data-act="backupfile">Save backup file</button><button data-act="backup">Copy backup text</button><button data-act="restore-open">Restore from backup</button></div></div>
     <div id="backupArea"></div></div>`;
   return h;
 }
@@ -539,7 +692,7 @@ function viewHistory() {
   let h = `<h2>History</h2>`;
   const rows = S.peptides.map(p => ({ p, a: adherence(p) })).filter(x => x.a && x.a.due);
   if (rows.length) h += `<div class="panel"><span class="label">Doses taken vs. scheduled, since each start date</span>
-    ${rows.map(({ p, a }) => `<div style="--c:${colorVar(p.color)};gap:4px" class="stack"><div class="row between small"><span>${esc(p.name)}</span><span class="mono">${a.taken}/${a.due}</span></div><div class="bar"><i style="width:${Math.round(100 * a.taken / a.due)}%"></i></div></div>`).join('')}</div>`;
+    ${rows.map(({ p, a }) => `<div style="--c:${colorVar(p.color)};gap:4px" class="stack"><div class="row between small"><span>${esc(p.name)}</span><span class="mono">${a.taken}/${a.due}${a.skipped ? ` <span class="muted">· ${a.skipped} skipped</span>` : ''}</span></div><div class="bar"><i style="width:${Math.round(100 * a.taken / a.due)}%"></i></div></div>`).join('')}</div>`;
   const entries = allLogs().slice().sort((a, b) => (b.date + b.at).localeCompare(a.date + a.at));
   if (!entries.length) return h + `<div class="empty"><p class="muted">Doses you mark as taken show up here, newest first.</p></div>`;
   const byDate = {};
@@ -548,7 +701,7 @@ function viewHistory() {
   for (const [d, list] of Object.entries(byDate).slice(0, 120)) {
     h += `<div class="hist-day"><span class="label">${esc(fmtDate(d))}</span>
       ${list.map(e => { const p = S.peptides.find(x => x.id === e.pid);
-        return `<div class="hist-item" style="--c:${colorVar(p ? p.color : 0)}"><span class="sw"></span><span>${esc(p ? p.name : 'Removed peptide')} <span class="small muted">· ${esc(e.label || mass(e.doseMg))}</span></span><span class="small muted mono">${fmt(e.units, 1)} u</span><button class="xbtn" aria-label="Delete entry" data-act="delentry" data-id="${e.id}" data-m="${d.slice(0, 7)}">×</button></div>`; }).join('')}</div>`;
+        return `<div class="hist-item" style="--c:${colorVar(p ? p.color : 0)}"><span class="sw"></span><span>${esc(p ? p.name : 'Removed peptide')} <span class="small muted">· ${esc(e.skipped ? 'Skipped' : e.label || mass(e.doseMg))}</span></span><span class="small muted mono">${e.skipped ? '—' : fmt(e.units, 1) + ' u'}</span>${p && !needsSetup(p) && !e.skipped ? `<button class="xbtn" aria-label="Change amount" data-act="amount" data-id="${p.id}" data-e="${e.id}">✎</button>` : '<span></span>'}<button class="xbtn" aria-label="Delete entry" data-act="delentry" data-id="${e.id}" data-m="${d.slice(0, 7)}">×</button></div>`; }).join('')}</div>`;
   }
   return h + `</div>`;
 }
@@ -602,7 +755,7 @@ function openEditor(id) {
   draft = p ? clone(p) : blank(); editingId = p ? id : null; delArm = false;
   renderEditor(); $('#sheet').hidden = false; setTimeout(() => { const f = $('#f-name'); if (f && !p) f.focus(); }, 30);
 }
-function closeEditor() { $('#sheet').hidden = true; draft = null; }
+function closeEditor() { $('#sheet').hidden = true; draft = null; amt = null; vial = null; }
 const nv = v => v == null ? '' : esc(v);
 function renderEditor() {
   const d = draft, multi = d.components.length > 1, f = d.freq || { type: 'none' };
@@ -621,6 +774,8 @@ function renderEditor() {
         <label class="field"><span>BAC water added (mL)</span><input id="f-water" type="number" inputmode="decimal" min="0" step="any" value="${nv(d.water)}" placeholder="2"></label>
         <label class="field"><span>Date you mixed this vial</span><input id="f-mixed" type="date" value="${nv(d.mixed)}"></label>
       </div>
+      <label class="field"><span>A mixed vial is good for (days)</span><input id="f-life" type="number" inputmode="numeric" min="1" step="1" value="${nv(d.vialDays)}" placeholder="Leave blank to skip age warnings"></label>
+      <p class="small muted">Use the number from your pharmacy or vial label. The app warns you 3 days before.</p>
     </fieldset>
 
     <fieldset><legend>Dose</legend>
@@ -656,6 +811,7 @@ function renderEditor() {
         <label class="field"><span>Length (weeks)</span><input id="f-weeks" type="number" min="1" step="1" value="${nv(d.weeks)}" ${d.weeks ? '' : 'disabled'} placeholder="8"></label>
       </div>
       <label class="check"><input type="checkbox" id="f-ongoing"${d.weeks ? '' : ' checked'}> No end date</label>
+      <label class="field"><span>Time of day</span><select id="f-time"><option value="">Any time</option>${TIMES.map(([v, l]) => `<option value="${v}"${d.time === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
     </fieldset>
 
     <label class="field"><span>Notes</span><input id="f-notes" value="${nv(d.notes)}" placeholder="e.g. at night, empty stomach"></label>
@@ -687,6 +843,8 @@ function readEditor() {
   d.start = val('f-start') || todayKey();
   d.weeks = $('#f-ongoing').checked ? null : (Math.round(num('f-weeks') || 0) || null);
   d.notes = val('f-notes').trim();
+  d.time = val('f-time') || '';
+  d.vialDays = Math.round(num('f-life') || 0) || null;
 }
 function updatePreview() {
   const el = $('#f-preview'); if (!el) return;
@@ -709,7 +867,7 @@ function template() {
   const mk = (name, color, extra) => Object.assign(blank(), { name, color, components: [{ name, mg: null }] }, extra);
   S.peptides = [
     mk('Tesamorelin', 0, { freq: { type: 'daily' }, weeks: 8, doseUnit: 'mg', titrate: true,
-      steps: [{ weeks: 1, dose: 0.5 }, { weeks: 1, dose: 1 }, { weeks: 1, dose: 1.5 }, { weeks: null, dose: 4 }] }),
+      steps: [{ weeks: 1, dose: 0.5 }, { weeks: 1, dose: 1 }, { weeks: 1, dose: 1.5 }, { weeks: null, dose: 2 }] }),
     mk('GHK-Cu', 1, { freq: { type: 'daily' } }),
     mk('Retatrutide', 2, { freq: { type: 'days', days: [wd] }, doseUnit: 'mg' }),
     mk('NAD+', 3, { freq: null, doseUnit: 'mg' }),
@@ -721,16 +879,152 @@ function template() {
 }
 
 /* ---------- logging ---------- */
-function logDose(pid) {
+function logDose(pid, date = selDate) {
   const p = S.peptides.find(x => x.id === pid); if (!p) return;
-  const c = compute(p, selDate); const m = selDate.slice(0, 7);
-  (L[m] ||= []).push({ id: uid(), pid, date: selDate, at: new Date().toISOString(), doseMg: c.ok ? c.doseMg : 0, units: c.ok ? +c.units.toFixed(2) : 0, label: doseText(p, selDate) });
+  const c = compute(p, date); const m = date.slice(0, 7);
+  (L[m] ||= []).push({ id: uid(), pid, date, at: new Date().toISOString(), doseMg: c.ok ? c.doseMg : 0, units: c.ok ? +c.units.toFixed(2) : 0, label: doseText(p, date) });
   persist('log-' + m); render();
+}
+function logSkip(pid, date = selDate) {
+  const m = date.slice(0, 7);
+  (L[m] ||= []).push({ id: uid(), pid, date, at: new Date().toISOString(), doseMg: 0, units: 0, label: 'Skipped', skipped: true });
+  persist('log-' + m); render();
+}
+// Custom-amount logging: the person enters the units they actually drew; mg comes from the vial's strength.
+let amt = null;   // { pid, eid (entry being changed) | null, date, add }
+function findEntry(eid) { for (const [m, list] of Object.entries(L)) { const e = list.find(x => x.id === eid); if (e) return { e, m }; } return null; }
+function strengthOf(p) {
+  const comps = p.components || []; const ri = Math.min(p.doseRef || 0, comps.length - 1); const ref = comps[ri];
+  return ref && +ref.mg > 0 && +p.water > 0 ? { conc: +ref.mg / +p.water, ri } : null;
+}
+function openAmount(pid, eid, add, date) {
+  const f = eid ? findEntry(eid) : null;
+  amt = { pid, eid: f ? eid : null, date: f ? f.e.date : date || selDate, add: !!add && !f };
+  draft = null; vial = null; renderAmount(); $('#sheet').hidden = false;
+  setTimeout(() => { const i = $('#a-units'); if (i) { i.focus(); i.select(); } }, 30);
+}
+function renderAmount() {
+  const p = S.peptides.find(x => x.id === amt.pid); if (!p) return closeEditor();
+  const f = amt.eid ? findEntry(amt.eid) : null;
+  const c = compute(p, amt.date);
+  const already = logsFor(p.id, amt.date).filter(l => l.id !== amt.eid).reduce((a, l) => a + (+l.units || 0), 0);
+  const start = f ? +f.e.units : amt.add ? (already || !c.ok ? '' : +c.units.toFixed(1)) : (c.ok ? +c.units.toFixed(1) : '');
+  const title = f ? `Change ${p.name} dose` : amt.add ? `Add more ${p.name}` : `Log ${p.name}`;
+  $('#sheetCard').innerHTML = `
+    <div class="row between"><h2>${esc(title)}</h2><button class="ghost" data-act="close">Close</button></div>
+    <p class="small muted">${esc(fmtDate(amt.date))}${c.ok && isDue(p, amt.date) ? ` · scheduled dose ${esc(fmt(c.units, 1))} units (${esc(doseText(p, amt.date))})` : ''}${already ? ` · already logged ${esc(fmt(already, 1))} units` : ''}</p>
+    <label class="field"><span>${amt.add ? 'Extra units you drew' : 'Units you drew'}</span><input id="a-units" class="amt-in" type="number" inputmode="decimal" min="0" step="any" value="${start === '' ? '' : esc(start)}" placeholder="0"></label>
+    <div class="preview" id="a-prev" style="--c:${colorVar(p.color)}"></div>
+    <div class="row between">
+      ${f ? `<button class="danger" data-act="delentry" data-id="${f.e.id}" data-m="${f.m}">Delete entry</button>` : '<span></span>'}
+      <div class="row"><button data-act="close">Cancel</button><button class="primary" data-act="saveamt">Save</button></div>
+    </div>`;
+  updateAmount();
+}
+function amountFrom(p, units) {
+  const s = strengthOf(p); if (!s || !(units > 0)) return null;
+  const ml = units / 100, mg = ml * s.conc, water = +p.water;
+  const parts = (p.components || []).map((x, i) => ({ name: x.name || p.name, mg: (+x.mg || 0) / water * ml, ref: i === s.ri }));
+  return { units, ml, mg, parts, label: `${fmt(p.doseUnit === 'mcg' ? mg * 1000 : mg, 3)} ${p.doseUnit}` };
+}
+function updateAmount() {
+  const el = $('#a-prev'); if (!el || !amt) return;
+  const p = S.peptides.find(x => x.id === amt.pid); const a = amountFrom(p, parseFloat($('#a-units').value));
+  if (!a) { el.innerHTML = `<p class="info">Enter the units on your syringe to see how much that is.</p>`; return; }
+  const c = compute(p, amt.date), cap = c.cap;
+  const already = logsFor(p.id, amt.date).filter(l => l.id !== amt.eid).reduce((x, l) => x + (+l.units || 0), 0);
+  const diff = c.ok && isDue(p, amt.date) ? already + a.units - c.units : 0;
+  el.innerHTML = `<div class="draw"><div class="big">${fmt(a.units, 1)}<span>units</span></div><div class="small muted mono">${fmt(a.ml, 3)} mL · ${esc(a.label)}${a.parts.length > 1 ? ' ' + esc(a.parts.find(x => x.ref).name) : ''}</div></div>
+    ${syringe(a.units, cap, 'var(--c)')}
+    ${a.parts.length > 1 ? `<p class="info">That draw contains ${a.parts.map(x => `<b>${esc(mass(x.mg))}</b> ${esc(x.name)}`).join(' + ')}</p>` : ''}
+    ${c.ok && Math.abs(diff) >= 0.05 ? `<p class="info">${already ? 'Day total ' + fmt(already + a.units, 1) + ' units: ' : ''}${fmt(Math.abs(diff), 1)} units ${diff > 0 ? 'more' : 'less'} than scheduled.</p>` : ''}
+    ${a.units > cap + 1e-9 ? `<p class="note">That’s more than one ${cap}-unit syringe. If you took it in two draws, that’s fine. Otherwise check the number.</p>` : ''}`;
+}
+function saveAmount() {
+  const p = S.peptides.find(x => x.id === amt.pid); const a = amountFrom(p, parseFloat($('#a-units').value));
+  if (!a) { toast('Enter how many units you drew.'); $('#a-units').focus(); return; }
+  const fields = { units: +a.units.toFixed(2), doseMg: +a.mg.toFixed(6), label: a.label };
+  let m;
+  if (amt.eid) { const f = findEntry(amt.eid); if (!f) return closeEditor(); Object.assign(f.e, fields); m = f.m; }
+  else { m = amt.date.slice(0, 7); (L[m] ||= []).push({ id: uid(), pid: p.id, date: amt.date, at: new Date().toISOString(), ...fields }); }
+  persist('log-' + m); closeEditor(); render(); toast(`Logged ${fmt(a.units, 1)} units of ${p.name}.`);
 }
 function unlog(pid) {
   const m = selDate.slice(0, 7); const list = L[m] || [];
   const i = list.map(l => l.pid === pid && l.date === selDate).lastIndexOf(true);
   if (i >= 0) { list.splice(i, 1); persist('log-' + m); render(); }
+}
+
+/* ---------- new vial ---------- */
+// Asks for the new vial's size and water, since a different mix changes the units to draw.
+// Doses already logged keep their mg, so history and the old vial stay correct.
+let vial = null;   // { pid, comps: [mg], water, mixed, life }
+function openVial(pid) {
+  const p = S.peptides.find(x => x.id === pid); if (!p) return;
+  vial = { pid, comps: (p.components || []).map(c => c.mg), water: p.water, mixed: todayKey(), life: p.vialDays || null };
+  draft = null; amt = null; renderVial(); $('#sheet').hidden = false;
+}
+function renderVial() {
+  const p = S.peptides.find(x => x.id === vial.pid); const multi = p.components.length > 1;
+  const old = compute(p);
+  $('#sheetCard').innerHTML = `
+    <div class="row between"><h2>New ${esc(p.name)} vial</h2><button class="ghost" data-act="close">Close</button></div>
+    <p class="small muted">Change anything that's different this time. A different vial size or amount of water changes how many units you draw.</p>
+    <div class="${multi ? 'grid2' : ''}">${p.components.map((c, i) => `<label class="field"><span>${multi ? esc(c.name || 'Peptide ' + (i + 1)) + ' (mg)' : 'Vial size (mg)'}</span><input id="v-mg-${i}" type="number" inputmode="decimal" min="0" step="any" value="${nv(vial.comps[i])}"></label>`).join('')}</div>
+    <div class="grid2">
+      <label class="field"><span>BAC water added (mL)</span><input id="v-water" type="number" inputmode="decimal" min="0" step="any" value="${nv(vial.water)}"></label>
+      <label class="field"><span>Date mixed</span><input id="v-mixed" type="date" value="${nv(vial.mixed)}" max="${todayKey()}"></label>
+    </div>
+    <label class="field"><span>Good for (days)</span><input id="v-life" type="number" inputmode="numeric" min="1" step="1" value="${nv(vial.life)}" placeholder="Optional"></label>
+    <div class="preview" id="v-prev" style="--c:${colorVar(p.color)}"></div>
+    ${old.ok && old.remaining > 1e-6 ? `<p class="small muted">The old vial still had about ${esc(mass(old.remaining))} by the app's count. It won't be counted anymore.</p>` : ''}
+    <div class="row between"><span></span><div class="row"><button data-act="close">Cancel</button><button class="primary" data-act="savevial">Save new vial</button></div></div>`;
+  updateVial();
+}
+function readVial() {
+  const num = id => { const el = $('#' + id); const v = el ? el.value.trim() : ''; return v === '' ? null : +v; };
+  vial.comps = vial.comps.map((_, i) => num('v-mg-' + i)); vial.water = num('v-water');
+  vial.mixed = ($('#v-mixed') || {}).value || todayKey(); vial.life = Math.round(num('v-life') || 0) || null;
+}
+function vialDraft(p) {
+  return Object.assign(clone(p), { components: p.components.map((c, i) => ({ ...c, mg: vial.comps[i] })), water: vial.water, mixed: vial.mixed, mixedAt: null });
+}
+function updateVial() {
+  const el = $('#v-prev'); if (!el || !vial) return;
+  const p = S.peptides.find(x => x.id === vial.pid); const before = compute(p), c = compute(vialDraft(p));
+  if (!c.ok) { el.innerHTML = `<p class="info">Enter the vial size and water to see the new draw.</p>`; return; }
+  const changed = before.ok && Math.abs(before.units - c.units) >= 0.05;
+  el.innerHTML = `<div class="draw"><div class="big">${fmt(c.units, 1)}<span>units</span></div><div class="small muted mono">${fmt(c.conc, 3)} mg/mL · ${esc(doseText(p))} · ${c.perVial} doses per vial</div></div>
+    ${syringe(c.units, c.cap, 'var(--c)')}
+    ${changed ? `<p class="note">Your draw changes from ${fmt(before.units, 1)} to ${fmt(c.units, 1)} units with this vial.</p>` : ''}${warnings(c)}`;
+}
+function saveVial() {
+  readVial();
+  const p = S.peptides.find(x => x.id === vial.pid); if (!p) return closeEditor();
+  if (!vial.comps.every(x => x > 0) || !(vial.water > 0)) { toast('Enter the vial size and water.'); return; }
+  p.components = p.components.map((c, i) => ({ ...c, mg: vial.comps[i] }));
+  p.water = vial.water; p.mixed = vial.mixed; p.vialDays = vial.life;
+  // Mixed today: doses logged earlier today stay with the old vial.
+  p.mixedAt = vial.mixed === todayKey() ? new Date().toISOString() : null;
+  const msg = `New ${p.name} vial counted from ${p.mixedAt ? 'now' : fmtDate(p.mixed)}.`;
+  persist('stack'); closeEditor(); render(); toast(msg);
+}
+
+/* ---------- backup ---------- */
+const backupText = () => JSON.stringify({ app: 'peptide-log', v: 1, stack: S, logs: L });
+function markBackedUp() { S.settings.lastBackup = new Date().toISOString(); delete S.settings.backupSnooze; persist('stack'); render(); }
+function saveBackupFile() {
+  const name = `peptide-log-backup-${todayKey()}.json`;
+  const file = new File([backupText()], name, { type: 'application/json' });
+  // On iPhone the share sheet offers "Save to Files"; elsewhere fall back to a download.
+  if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: 'Peptide Log backup' }).then(() => { markBackedUp(); toast('Backup saved.'); })
+      .catch(e => { if (!e || e.name !== 'AbortError') toast('Couldn’t share the file. Try Copy backup text instead.'); });
+    return;
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  markBackedUp(); toast('Backup file downloaded.');
 }
 
 /* ---------- toast ---------- */
@@ -752,8 +1046,27 @@ document.addEventListener('click', async e => {
   else if (act === 'add') openEditor(null);
   else if (act === 'edit') openEditor(id);
   else if (act === 'close') closeEditor();
-  else if (act === 'log') logDose(id);
+  else if (act === 'log') logDose(id, b.dataset.d || selDate);
+  else if (act === 'skip') logSkip(id, b.dataset.d || selDate);
   else if (act === 'unlog') unlog(id);
+  else if (act === 'amount') openAmount(id, b.dataset.e || null, b.dataset.add, b.dataset.d);
+  else if (act === 'savevial') saveVial();
+  else if (act === 'backupfile') saveBackupFile();
+  else if (act === 'snooze') { S.settings.backupSnooze = new Date(Date.now() + 3 * 864e5).toISOString(); persist('stack'); render(); }
+  else if (act === 'pause') {
+    const p = S.peptides.find(x => x.id === id); if (!p || openPause(p)) return;
+    // If today's dose is already logged, the pause starts tomorrow.
+    const t = todayKey(), from = logsFor(p.id, t).length ? keyOf(addDays(new Date(), 1)) : t;
+    p.pauses = [...pausesOf(p), { from, to: null }];
+    persist('stack'); render(); toast(`${p.name} paused. The course and dose steps move back by the days it's paused.`);
+  }
+  else if (act === 'resume') {
+    const p = S.peptides.find(x => x.id === id); const z = p && openPause(p); if (!z) return;
+    const to = keyOf(addDays(new Date(), -1));
+    p.pauses = to < z.from ? pausesOf(p).filter(x => x !== z) : pausesOf(p).map(x => x === z ? { from: x.from, to } : x);
+    persist('stack'); render(); toast(`${p.name} resumed. It's due again from today.`);
+  }
+  else if (act === 'saveamt') saveAmount();
   else if (act === 'addcomp') { readEditor(); if (draft.components.length === 1) draft.components[0].name = draft.name; draft.components.push({ name: '', mg: null }); renderEditor(); }
   else if (act === 'addstep') { readEditor(); const st = draft.steps; st[st.length - 1].weeks = st[st.length - 1].weeks || 1; st.push({ weeks: null, dose: null }); renderEditor(); }
   else if (act === 'rmstep') { readEditor(); draft.steps.splice(draft.steps.length - 2, 1); renderEditor(); }
@@ -770,21 +1083,18 @@ document.addEventListener('click', async e => {
     if (!delArm) { readEditor(); delArm = true; renderEditor(); return; }
     S.peptides = S.peptides.filter(x => x.id !== editingId); persist('stack'); closeEditor(); render(); toast('Deleted.');
   }
-  else if (act === 'newvial') {
-    const p = S.peptides.find(x => x.id === id); if (!p) return;
-    p.mixed = todayKey(); persist('stack'); render(); toast(`New ${p.name} vial counted from today.`);
-  }
+  else if (act === 'newvial') openVial(id);
   else if (act === 'delentry') {
     const list = L[b.dataset.m] || []; const i = list.findIndex(x => x.id === id);
-    if (i >= 0) { list.splice(i, 1); persist('log-' + b.dataset.m); render(); }
+    if (i >= 0) { list.splice(i, 1); persist('log-' + b.dataset.m); if (amt) closeEditor(); render(); }
   }
   else if (act === 'backup') {
     const text = JSON.stringify({ app: 'peptide-log', v: 1, stack: S, logs: L });
-    try { await navigator.clipboard.writeText(text); toast('Backup copied. Paste it into a note to keep it safe.'); }
+    try { await navigator.clipboard.writeText(text); markBackedUp(); toast('Backup copied. Paste it into a note to keep it safe.'); }
     catch { $('#backupArea').innerHTML = `<label class="field"><span>Select all and copy this text</span><textarea id="bk" readonly>${esc(text)}</textarea></label>`; $('#bk').select(); }
   }
   else if (act === 'restore-open') {
-    $('#backupArea').innerHTML = `<label class="field"><span>Paste a backup. This replaces everything currently in the app.</span><textarea id="rs"></textarea></label><div><button class="danger" data-act="restore">Replace with this backup</button></div>`;
+    $('#backupArea').innerHTML = `<label class="field"><span>Paste a backup. This replaces everything currently in the app.</span><textarea id="rs"></textarea></label><label class="field"><span>Or pick a backup file</span><input type="file" id="rs-file" accept=".json,application/json,text/plain"></label><div><button class="danger" data-act="restore">Replace with this backup</button></div>`;
   }
   else if (act === 'restore') {
     try {
@@ -796,8 +1106,13 @@ document.addEventListener('click', async e => {
   }
 });
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeEditor(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#sheet').hidden) closeEditor(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !$('#sheet').hidden) closeEditor();
+  if (e.key === 'Enter' && amt && e.target.id === 'a-units') saveAmount();
+});
 $('#sheetCard').addEventListener('input', e => {
+  if (amt) { updateAmount(); return; }
+  if (vial) { readVial(); updateVial(); return; }
   if (!draft) return; readEditor(); if (delArm) delArm = false;
   if (e.target.id === 'f-ongoing') { const w = $('#f-weeks'); w.disabled = e.target.checked; if (!e.target.checked && !w.value) { w.value = 8; readEditor(); } }
   updatePreview();
@@ -810,6 +1125,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'c-unit') calcUpdate();
+  if (e.target.id === 'rs-file' && e.target.files[0]) e.target.files[0].text().then(t => { $('#rs').value = t; toast('Backup file loaded. Tap “Replace with this backup” to restore it.'); });
   if (e.target.id === 's-syr') { S.settings.syringe = +e.target.value; persist('stack'); render(); }
 });
 
